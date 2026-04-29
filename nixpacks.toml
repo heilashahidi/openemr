@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["php83", "php83Extensions.pdo", "php83Extensions.pdo_mysql", "php83Extensions.mbstring", "php83Extensions.xml", "php83Extensions.curl", "php83Extensions.gd", "php83Extensions.soap", "php83Extensions.intl"]
+
+[phases.install]
+cmds = ["mkdir -p library/classes", "composer install --optimize-autoloader --no-scripts --no-interaction"]
+
+[start]
+cmd = "php -S 0.0.0.0:$PORT -t ."
