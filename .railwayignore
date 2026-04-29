@@ -1,0 +1,9 @@
+.git
+tests
+Test
+vendor
+node_modules
+documentation
+contrib
+docker
+*.sql.gz
