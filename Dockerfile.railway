@@ -1,0 +1,14 @@
+FROM openemr/openemr:7.0.2
+
+# Runtime environment variables (set in Railway, not at build time):
+#   MYSQL_HOST       - hostname of the MySQL service (use Railway reference)
+#   MYSQL_ROOT_PASS  - root password (used for first-run install)
+#   MYSQL_USER       - app DB user (auto-created on first boot)
+#   MYSQL_PASS       - app DB password (auto-created on first boot)
+#   OE_USER          - OpenEMR admin username
+#   OE_PASS          - OpenEMR admin password
+#
+# The openemr/openemr image's entrypoint reads these and auto-runs the
+# installer on first container start; no manual setup wizard required.
+
+EXPOSE 80
