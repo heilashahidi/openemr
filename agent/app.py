@@ -16,6 +16,11 @@ from tools import TOOLS, execute_tool
 from verification import verify_response
 from langsmith import traceable
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+
+
 urllib3.disable_warnings()
 
 app = FastAPI(title="Clinical Co-Pilot")
@@ -209,7 +214,12 @@ async def chat(req: ChatRequest):
 
     raise HTTPException(status_code=500, detail="Agent exceeded max iterations")
 
+@app.get("/ui")
+async def ui():
+    return FileResponse("chat.html")
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+

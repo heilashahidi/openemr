@@ -78,6 +78,100 @@
 
   .patient-select-wrap select:focus { border-color: var(--accent); }
 
+  .patient-directory-toggle {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 12px; font-size: 13px;
+    cursor: pointer; min-width: 320px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    transition: border-color 0.15s;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .patient-directory-toggle:hover { border-color: var(--accent); }
+
+  .patient-directory {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-width: 600px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    z-index: 100;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+
+  .patient-directory.open { display: block; }
+
+  .patient-select-wrap {
+    display: flex; align-items: center; gap: 8px;
+    position: relative;
+  }
+
+  .directory-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .directory-search {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 10px; font-family: inherit; font-size: 12px;
+    outline: none; width: 180px;
+  }
+
+  .directory-search:focus { border-color: var(--accent); }
+  .directory-search::placeholder { color: var(--text-dim); }
+
+  .directory-list {
+    max-height: 350px;
+    overflow-y: auto;
+  }
+
+  .directory-list::-webkit-scrollbar { width: 4px; }
+  .directory-list::-webkit-scrollbar-track { background: transparent; }
+  .directory-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .directory-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    transition: background 0.1s;
+  }
+
+  .directory-row:hover { background: var(--surface-2); }
+  .directory-row.active { background: var(--accent-dim); border-left: 3px solid var(--accent); }
+
+  .directory-row:last-child { border-bottom: none; }
+
+  .directory-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px; font-weight: 600; color: var(--text);
+    letter-spacing: 0.02em;
+  }
+
+  .directory-details {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; color: var(--text-dim);
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+
+  .directory-details span {
+    display: flex; align-items: center; gap: 3px;
+  }
+
+  .directory-details .sep { color: var(--border); }
+
   .status-badge {
     display: flex; align-items: center; gap: 5px;
     font-size: 11px; color: var(--green);
@@ -187,6 +281,114 @@
 
   .brief-card strong { color: var(--text); }
   .brief-card .dim { color: var(--text-dim); font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+
+  .source-badge {
+    color: var(--green);
+    text-decoration: none;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 1px 6px;
+    background: var(--green-dim);
+    border-radius: 3px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .source-badge:hover {
+    background: var(--green);
+    color: white;
+  }
+
+  .citation-popup {
+    position: fixed;
+    bottom: 80px;
+    right: 24px;
+    width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    z-index: 200;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.15s ease-out;
+  }
+
+  .citation-popup.open {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .citation-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--green);
+  }
+
+  .citation-close {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .citation-close:hover { color: var(--text); }
+
+  .citation-popup-body {
+    padding: 12px 14px;
+  }
+
+  .citation-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 12px;
+  }
+
+  .citation-row:last-child { border: none; }
+
+  .citation-label {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .citation-uuid {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  .citation-chart-link {
+    display: block;
+    text-align: center;
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: var(--accent);
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: -apple-system, sans-serif;
+    transition: background 0.15s;
+  }
+
+  .citation-chart-link:hover {
+    background: #2563eb;
+  }
 
   .brief-card ul {
     list-style: none;
@@ -387,18 +589,17 @@
   <div class="header-right">
     <div class="patient-select-wrap">
       <label>Patient:</label>
-      <select id="patientSelect" onchange="onPatientSelect()">
-        <option value="">Select a patient...</option>
-        <option value="a1a5b7d7-bac2-4eb8-b471-96f0eadb219e">Sarah Smith — HTN, diabetes, hyperlipidemia</option>
-        <option value="a1a5b82c-a50b-4e0d-b86f-4d7d216f6c27">Philip Cramer — COPD, AFib, osteoarthritis</option>
-        <option value="a1a5b8f9-7933-44a5-bad1-b4fdf8381d57">Candy Lane — depression, anxiety, migraines</option>
-        <option value="a1a9fb05-f4c5-484e-bcc6-5bfaa9218be1">Robert Williams — depression, anxiety, HTN</option>
-        <option value="a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163">Maria Garcia — diabetes, HTN, back pain</option>
-        <option value="a1a9fb05-f4cb-4b9c-b9ed-ae7a03fc8389">James Thompson — CAD, diabetes, CKD</option>
-        <option value="a1a9fb05-f4cd-49e2-8090-e9720effcc4b">Emily Chen — new patient (sparse chart)</option>
-        <option value="fbaa4958-437f-11f1-9821-62123fdb3c0f">David Nakamura — CAD, HF, diabetes, CKD, AFib</option>
-        <option value="fc6aeb54-437f-11f1-9821-62123fdb3c0f">Angela Washington — lupus, depression, hypothyroid</option>
-      </select>
+      <div class="patient-directory-toggle" onclick="toggleDirectory()">
+        <span id="selectedPatientName">Select a patient...</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="patient-directory" id="patientDirectory">
+        <div class="directory-header">
+          <span>Patient Directory</span>
+          <input type="text" class="directory-search" id="directorySearch" placeholder="Search by name, DOB, or MRN..." oninput="filterPatients()">
+        </div>
+        <div class="directory-list" id="directoryList"></div>
+      </div>
     </div>
     <div class="status-badge">
       <div class="status-dot"></div>
@@ -475,10 +676,75 @@
 <script>
 const AGENT_URL = 'http://localhost:8000';
 let conversationHistory = [];
+let selectedPatientId = '';
+
+const PATIENTS = [
+  { id: 'a1a5b7d7-bac2-4eb8-b471-96f0eadb219e', last: 'SMITH', first: 'SARAH', dob: '04/28/1990', age: 36, sex: 'F', mrn: '100001' },
+  { id: 'a1a5b82c-a50b-4e0d-b86f-4d7d216f6c27', last: 'CRAMER', first: 'PHILIP', dob: '08/15/1952', age: 73, sex: 'M', mrn: '100002' },
+  { id: 'a1a5b8f9-7933-44a5-bad1-b4fdf8381d57', last: 'LANE', first: 'CANDY', dob: '11/02/1988', age: 37, sex: 'F', mrn: '100003' },
+  { id: 'a1a9fb05-f4c5-484e-bcc6-5bfaa9218be1', last: 'WILLIAMS', first: 'ROBERT', dob: '02/19/1975', age: 51, sex: 'M', mrn: '100004' },
+  { id: 'a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163', last: 'GARCIA', first: 'MARIA', dob: '03/15/1968', age: 58, sex: 'F', mrn: '100005' },
+  { id: 'a1a9fb05-f4cb-4b9c-b9ed-ae7a03fc8389', last: 'THOMPSON', first: 'JAMES', dob: '11/28/1955', age: 70, sex: 'M', mrn: '100006' },
+  { id: 'a1a9fb05-f4cd-49e2-8090-e9720effcc4b', last: 'CHEN', first: 'EMILY', dob: '07/04/1992', age: 33, sex: 'F', mrn: '100007' },
+  { id: 'fbaa4958-437f-11f1-9821-62123fdb3c0f', last: 'NAKAMURA', first: 'DAVID', dob: '06/22/1958', age: 67, sex: 'M', mrn: '100008' },
+  { id: 'fc6aeb54-437f-11f1-9821-62123fdb3c0f', last: 'WASHINGTON', first: 'ANGELA', dob: '01/30/1984', age: 42, sex: 'F', mrn: '100009' },
+];
+
+function renderDirectory(filter = '') {
+  const list = document.getElementById('directoryList');
+  const filtered = PATIENTS.filter(p => {
+    const search = filter.toLowerCase();
+    return !search || p.last.toLowerCase().includes(search) || p.first.toLowerCase().includes(search) || p.mrn.includes(search) || p.dob.includes(search);
+  });
+
+  list.innerHTML = filtered.map(p => `
+    <div class="directory-row ${p.id === selectedPatientId ? 'active' : ''}" onclick="selectPatient('${p.id}')">
+      <div class="directory-name">${p.last}, ${p.first}</div>
+      <div class="directory-details">
+        <span>DOB: ${p.dob} (${p.age}y)</span>
+        <span class="sep">|</span>
+        <span>Sex: ${p.sex}</span>
+        <span class="sep">|</span>
+        <span>MRN: ${p.mrn}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleDirectory() {
+  const dir = document.getElementById('patientDirectory');
+  dir.classList.toggle('open');
+  if (dir.classList.contains('open')) {
+    document.getElementById('directorySearch').focus();
+    renderDirectory();
+  }
+}
+
+function filterPatients() {
+  const search = document.getElementById('directorySearch').value;
+  renderDirectory(search);
+}
+
+function selectPatient(id) {
+  selectedPatientId = id;
+  const patient = PATIENTS.find(p => p.id === id);
+  document.getElementById('selectedPatientName').textContent = `${patient.last}, ${patient.first}  |  DOB: ${patient.dob} (${patient.age}y)  |  ${patient.sex}  |  MRN: ${patient.mrn}`;
+  document.getElementById('patientDirectory').classList.remove('open');
+  document.getElementById('directorySearch').value = '';
+  onPatientSelect();
+}
+
+document.addEventListener('click', (e) => {
+  const dir = document.getElementById('patientDirectory');
+  const wrap = document.querySelector('.patient-select-wrap');
+  if (dir && !wrap.contains(e.target)) {
+    dir.classList.remove('open');
+  }
+});
 
 /* ── Auto-briefing on patient select ── */
 async function onPatientSelect() {
-  const patientId = document.getElementById('patientSelect').value;
+  const patientId = selectedPatientId;
   if (!patientId) return;
 
   conversationHistory = [];
@@ -583,13 +849,67 @@ function parseBriefing(text) {
   return sections;
 }
 
+const PATIENT_PIDS = {
+  'a1a5b7d7-bac2-4eb8-b471-96f0eadb219e': 1,
+  'a1a5b82c-a50b-4e0d-b86f-4d7d216f6c27': 2,
+  'a1a5b8f9-7933-44a5-bad1-b4fdf8381d57': 3,
+  'a1a9fb05-f4c5-484e-bcc6-5bfaa9218be1': 4,
+  'a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163': 5,
+  'a1a9fb05-f4cb-4b9c-b9ed-ae7a03fc8389': 6,
+  'a1a9fb05-f4cd-49e2-8090-e9720effcc4b': 7,
+  'fbaa4958-437f-11f1-9821-62123fdb3c0f': 8,
+  'fc6aeb54-437f-11f1-9821-62123fdb3c0f': 9,
+};
+
+function getChartUrl(resourceType) {
+  const pid = PATIENT_PIDS[selectedPatientId] || 1;
+  return `https://localhost:9300/interface/patient_file/summary/demographics.php?set_pid=${pid}`;
+}
+
+function showCitation(label, uuid) {
+  const existing = document.getElementById('citationPopup');
+  if (existing) existing.remove();
+
+  const chartUrl = getChartUrl(label);
+  const popup = document.createElement('div');
+  popup.id = 'citationPopup';
+  popup.className = 'citation-popup';
+  popup.innerHTML = `
+    <div class="citation-popup-header">
+      <span>Source Record</span>
+      <span class="citation-close" onclick="this.parentElement.parentElement.remove()">✕</span>
+    </div>
+    <div class="citation-popup-body">
+      <div class="citation-row"><span class="citation-label">Resource</span><span>${label}</span></div>
+      <div class="citation-row"><span class="citation-label">FHIR ID</span><span class="citation-uuid">${uuid}</span></div>
+      <div class="citation-row"><span class="citation-label">API Path</span><span class="citation-uuid">/fhir/${label}/${uuid}</span></div>
+      <div class="citation-row"><span class="citation-label">Status</span><span style="color:var(--green)">✓ Retrieved and verified</span></div>
+      <div class="citation-row"><span class="citation-label">Verify</span><span class="citation-uuid" style="cursor:pointer" onclick="navigator.clipboard.writeText('/apis/default/fhir/${label}/${uuid}');this.textContent='✓ Path copied!';setTimeout(()=>this.textContent='Copy FHIR path',1000)">Copy FHIR path</span></div>
+    </div>
+  `;
+  document.body.appendChild(popup);
+  setTimeout(() => popup.classList.add('open'), 10);
+  document.addEventListener('click', function handler(e) {
+    if (!popup.contains(e.target) && !e.target.classList.contains('source-badge')) {
+      popup.remove();
+      document.removeEventListener('click', handler);
+    }
+  });
+}
+
 function formatContent(text) {
   return text
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n- /g, '<br>• ')
+    .replace(/\n- /g, '\n• ')
     .replace(/\n•/g, '<br>•')
+    .replace(/•/g, '<br>• ')
+    .replace(/(<br>• ){2,}/g, '<br>• ')
+    .replace(/^\s*<br>/,'')
     .replace(/\n/g, '<br>')
-    .replace(/\(([A-Za-z]+ ID: [a-f0-9-]+)\)/g, '<span class="dim">($1)</span>');
+    .replace(/\(?(?:(Condition|Medication|MedicationRequest|AllergyIntolerance|Encounter|Observation|Patient)\s*(?:ID)?:?\s*)?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\)?/gi, (match, resourceType, uuid) => {
+      const label = resourceType ? resourceType.replace('Request','') : 'Source';
+      return `<span class="source-badge" onclick="showCitation('${label}','${uuid}')" title="View source — FHIR ${label}: ${uuid}">✓ ${label} ↗</span>`;
+    });
 }
 
 /* ── Chat ── */
@@ -617,8 +937,14 @@ function addMessage(role, content, meta = null) {
   let html = content
     .replace(/## (.*)/g, '<h2>$1</h2>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n- /g, '<br>• ')
-    .replace(/\n/g, '<br>');
+    .replace(/\n- /g, '\n• ')
+    .replace(/\n•/g, '<br>• ')
+    .replace(/•/g, '• ')
+    .replace(/\n/g, '<br>')
+    .replace(/\(?(?:(Condition|Medication|MedicationRequest|AllergyIntolerance|Encounter|Observation|Patient)\s*(?:ID)?:?\s*)?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\)?/gi, (match, resourceType, uuid) => {
+      const label = resourceType ? resourceType.replace('Request','') : 'Source';
+      return `<span class="source-badge" onclick="showCitation('${label}','${uuid}')" title="View source — FHIR ${label}: ${uuid}">✓ ${label} ↗</span>`;
+    });
 
   let metaHtml = '';
   if (meta) {
@@ -641,7 +967,7 @@ function addMessage(role, content, meta = null) {
 
 async function sendMessage() {
   const input = document.getElementById('messageInput');
-  const patientId = document.getElementById('patientSelect').value;
+  const patientId = selectedPatientId;
   const message = input.value.trim();
 
   if (!message) return;

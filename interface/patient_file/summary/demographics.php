@@ -2047,6 +2047,7 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
                 </div> <!-- end right column div -->
             </div> <!-- end div.main > row:first  -->
         </div> <!-- end main content div -->
+        <!-- Clinical Co-Pilot -->
     </div><!-- end container div -->
     <?php $oemr_ui->oeBelowContainerDiv(); ?>
     <script>
@@ -2070,3 +2071,106 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
 </body>
 <?php $ed->dispatch(new RenderEvent($pid), RenderEvent::EVENT_RENDER_POST_PAGELOAD); ?>
 </html>
+
+
+
+<!-- Clinical Co-Pilot -->
+<style>
+#copilot-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  background: #ef4444;
+  color: white;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 24px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(239,68,68,0.4);
+  transition: all 0.2s;
+}
+#copilot-btn:hover { transform: scale(1.1); }
+#copilot-btn.hidden { display: none; }
+#copilot-drawer {
+  position: fixed;
+  top: 10px;
+  right: -85vw;
+  width: 80vw;
+  height: calc(100vh - 20px);
+  min-width: 400px;
+  min-height: 300px;
+  background: #0a0e14;
+  border: 2px solid #3b82f6;
+  border-radius: 12px;
+  z-index: 10001;
+  transition: right 0.3s ease;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+}
+#copilot-drawer.open { right: 10px; }
+#copilot-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #12171f;
+  border-bottom: 1px solid #252d3a;
+  border-radius: 10px 10px 0 0;
+}
+#copilot-drawer-header span { color: #e2e8f0; font-size: 13px; font-weight: 600; font-family: -apple-system, sans-serif; }
+#copilot-drawer-close { color: #7a8599; font-size: 20px; cursor: pointer; background: none; border: none; }
+#copilot-drawer-close:hover { color: #e2e8f0; }
+#copilot-drawer iframe { flex: 1; width: 100%; border: none; border-radius: 0 0 12px 12px; }
+#copilot-resize-left {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+}
+</style>
+<div id="copilot-btn" onclick="document.getElementById('copilot-drawer').classList.add('open'); this.classList.add('hidden');">⚕️</div>
+<div id="copilot-drawer">
+  <div id="copilot-resize-left"></div>
+  <div id="copilot-drawer-header">
+    <span>⚕️ Clinical Co-Pilot</span>
+    <button id="copilot-drawer-close" onclick="document.getElementById('copilot-drawer').classList.remove('open'); document.getElementById('copilot-btn').classList.remove('hidden');">✕</button>
+  </div>
+  <iframe src="http://localhost:8000/ui"></iframe>
+</div>
+<script>
+(function(){
+  const drawer = document.getElementById('copilot-drawer');
+  const handle = document.getElementById('copilot-resize-left');
+  let resizing = false, startX, startW;
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    resizing = true;
+    startX = e.clientX;
+    startW = drawer.offsetWidth;
+    drawer.style.transition = 'none';
+    drawer.querySelector('iframe').style.pointerEvents = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+  function onMove(e) {
+    if (!resizing) return;
+    drawer.style.width = Math.max(400, startW + (startX - e.clientX)) + 'px';
+  }
+  function onUp() {
+    resizing = false;
+    drawer.style.transition = '';
+    drawer.querySelector('iframe').style.pointerEvents = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+})();
+</script>
