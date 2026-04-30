@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from anthropic import Anthropic
 from tools import TOOLS, execute_tool
 from verification import verify_response
+from langsmith import traceable
 
 urllib3.disable_warnings()
 
@@ -32,7 +33,9 @@ OPENEMR_CLIENT_ID = os.getenv("OPENEMR_CLIENT_ID", "")
 OPENEMR_CLIENT_SECRET = os.getenv("OPENEMR_CLIENT_SECRET", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+from langsmith.wrappers import wrap_anthropic
+client = wrap_anthropic(Anthropic(api_key=ANTHROPIC_API_KEY))
+
 
 # Token cache
 _token_cache = {"token": None, "expires_at": 0}
@@ -106,6 +109,7 @@ class ChatResponse(BaseModel):
     verified: bool
 
 
+@traceable(name="clinical_copilot_chat")
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """Main chat endpoint. PCP sends a question about a patient."""
