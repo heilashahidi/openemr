@@ -4,23 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Clinical Co-Pilot</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0c1117;
-    --surface: #151b23;
-    --surface-hover: #1c232d;
-    --border: #2a3240;
+    --bg: #0a0e14;
+    --surface: #12171f;
+    --surface-2: #1a2030;
+    --border: #252d3a;
     --text: #e2e8f0;
-    --text-dim: #8b95a5;
+    --text-dim: #7a8599;
     --accent: #3b82f6;
-    --accent-dim: rgba(59, 130, 246, 0.15);
+    --accent-dim: rgba(59, 130, 246, 0.12);
     --green: #22c55e;
-    --green-dim: rgba(34, 197, 94, 0.15);
+    --green-dim: rgba(34, 197, 94, 0.12);
     --amber: #f59e0b;
-    --amber-dim: rgba(245, 158, 11, 0.15);
+    --amber-dim: rgba(245, 158, 11, 0.12);
     --red: #ef4444;
-    --red-dim: rgba(239, 68, 68, 0.15);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,169 +31,262 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
-  /* Header */
+  /* ── Header ── */
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .logo {
-    width: 32px;
-    height: 32px;
-    background: var(--accent);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 14px;
-    color: white;
-  }
-
-  .header h1 {
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
-
-  .header h1 span {
-    color: var(--text-dim);
-    font-weight: 400;
-  }
-
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--green);
-    background: var(--green-dim);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-family: 'IBM Plex Mono', monospace;
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    background: var(--green);
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
-  /* Patient selector */
-  .patient-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     padding: 12px 24px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+    flex-shrink: 0;
   }
 
-  .patient-bar label {
-    font-size: 13px;
-    color: var(--text-dim);
-    font-weight: 500;
+  .header-left { display: flex; align-items: center; gap: 12px; }
+
+  .logo {
+    width: 34px; height: 34px;
+    background: linear-gradient(135deg, #3b82f6, #22c55e);
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 12px; color: white;
+    letter-spacing: -0.5px;
   }
 
-  .patient-bar select {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-family: 'IBM Plex Sans', sans-serif;
-    font-size: 13px;
-    outline: none;
-    cursor: pointer;
+  .header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+  .header h1 span { color: var(--text-dim); font-weight: 400; }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+
+  .patient-select-wrap {
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .patient-select-wrap label {
+    font-size: 12px; color: var(--text-dim); font-weight: 500;
+  }
+
+  .patient-select-wrap select {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 12px; font-family: inherit; font-size: 13px;
+    outline: none; cursor: pointer; min-width: 180px;
+  }
+
+  .patient-select-wrap select:focus { border-color: var(--accent); }
+
+  .status-badge {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--green);
+    background: var(--green-dim); padding: 4px 10px;
+    border-radius: 20px; font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px; background: var(--green);
+    border-radius: 50%; animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Main layout ── */
+  .main {
     flex: 1;
-    max-width: 400px;
+    display: flex;
+    overflow: hidden;
   }
 
-  .patient-bar select:focus {
-    border-color: var(--accent);
+  /* ── Left: Briefing panel ── */
+  .briefing-side {
+    width: 420px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
   }
 
-  .quick-actions {
+  .briefing-label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 20px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .briefing-label svg { opacity: 0.7; }
+
+  .briefing-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+
+  .briefing-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    text-align: center;
+    gap: 12px;
+  }
+
+  .briefing-placeholder svg { opacity: 0.3; }
+  .briefing-placeholder p { font-size: 13px; max-width: 260px; line-height: 1.6; }
+
+  .briefing-loading {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 14px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .briefing-loading.active { display: flex; }
+
+  /* Briefing cards */
+  .brief-section {
+    margin-bottom: 16px;
+  }
+
+  .brief-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .brief-section-label .dot {
+    width: 4px; height: 4px;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+
+  .brief-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .brief-card strong { color: var(--text); }
+  .brief-card .dim { color: var(--text-dim); font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+
+  .brief-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .brief-card li {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+
+  .brief-card li:last-child { border: none; }
+
+  .brief-meta-row {
     display: flex;
     gap: 8px;
-    margin-left: auto;
+    flex-wrap: wrap;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border);
+    margin-top: 12px;
   }
 
-  .quick-btn {
-    font-family: 'IBM Plex Sans', sans-serif;
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--surface-hover);
+  /* ── Right: Chat ── */
+  .chat-side {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  .chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .chat-header-title {
+    font-size: 13px;
+    font-weight: 500;
     color: var(--text-dim);
-    cursor: pointer;
-    transition: all 0.15s;
+  }
+
+  .quick-actions { display: flex; gap: 6px; }
+
+  .quick-btn {
+    font-family: inherit; font-size: 11px;
+    padding: 5px 10px; border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-dim);
+    cursor: pointer; transition: all 0.15s;
   }
 
   .quick-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--accent); color: var(--accent);
     background: var(--accent-dim);
   }
 
-  /* Chat area */
   .chat-area {
     flex: 1;
     overflow-y: auto;
-    padding: 24px;
+    padding: 20px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
   }
 
-  .message {
-    max-width: 85%;
-    animation: fadeIn 0.2s ease-out;
+  .chat-area::-webkit-scrollbar { width: 5px; }
+  .chat-area::-webkit-scrollbar-track { background: transparent; }
+  .chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .chat-welcome {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.6;
   }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
+  .message { max-width: 82%; animation: fadeIn 0.2s ease-out; }
+  .message.user { align-self: flex-end; }
+  .message.assistant { align-self: flex-start; }
 
-  .message.user {
-    align-self: flex-end;
-  }
-
-  .message.assistant {
-    align-self: flex-start;
-  }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
 
   .message-content {
-    padding: 12px 16px;
-    border-radius: 12px;
-    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
     line-height: 1.6;
   }
 
   .message.user .message-content {
-    background: var(--accent);
-    color: white;
+    background: var(--accent); color: white;
     border-bottom-right-radius: 4px;
   }
 
@@ -204,364 +296,202 @@
     border-bottom-left-radius: 4px;
   }
 
-  .message-content h2 {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-    color: var(--accent);
-  }
+  .message-content strong { color: var(--text); }
 
-  .message-content strong {
-    color: var(--text);
-  }
-
-  .message-content ul, .message-content ol {
-    padding-left: 20px;
-    margin: 4px 0;
-  }
-
-  /* Metadata bar under assistant messages */
   .message-meta {
-    display: flex;
-    gap: 12px;
-    margin-top: 8px;
-    flex-wrap: wrap;
+    display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap;
   }
 
   .meta-tag {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
+    font-size: 10px; padding: 2px 7px;
+    border-radius: 4px; display: flex;
+    align-items: center; gap: 3px;
   }
 
-  .meta-tag.tools {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
+  .meta-tag.tools { background: var(--accent-dim); color: var(--accent); }
+  .meta-tag.citations { background: var(--green-dim); color: var(--green); }
+  .meta-tag.tokens { background: var(--amber-dim); color: var(--amber); }
+  .meta-tag.verified { background: var(--green-dim); color: var(--green); }
+  .meta-tag.unverified { background: rgba(239,68,68,0.12); color: var(--red); }
 
-  .meta-tag.citations {
-    background: var(--green-dim);
-    color: var(--green);
-  }
-
-  .meta-tag.tokens {
-    background: var(--amber-dim);
-    color: var(--amber);
-  }
-
-  .meta-tag.verified {
-    background: var(--green-dim);
-    color: var(--green);
-  }
-
-  .meta-tag.unverified {
-    background: var(--red-dim);
-    color: var(--red);
-  }
-
-  /* Typing indicator */
-  .typing {
-    align-self: flex-start;
-    display: none;
-  }
-
+  /* Typing */
+  .typing { align-self: flex-start; display: none; }
   .typing.active { display: flex; }
 
   .typing-dots {
-    display: flex;
-    gap: 4px;
-    padding: 12px 16px;
+    display: flex; gap: 4px;
+    padding: 10px 14px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
     border-bottom-left-radius: 4px;
   }
 
   .typing-dot {
-    width: 6px;
-    height: 6px;
-    background: var(--text-dim);
-    border-radius: 50%;
-    animation: typingBounce 1.2s infinite;
+    width: 5px; height: 5px;
+    background: var(--text-dim); border-radius: 50%;
+    animation: bounce 1.2s infinite;
   }
 
   .typing-dot:nth-child(2) { animation-delay: 0.2s; }
   .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 
-  @keyframes typingBounce {
-    0%, 60%, 100% { transform: translateY(0); }
-    30% { transform: translateY(-6px); }
-  }
+  @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
 
-  /* Input area */
+  /* Input */
   .input-area {
-    padding: 16px 24px;
+    padding: 14px 20px;
     border-top: 1px solid var(--border);
     background: var(--surface);
   }
 
-  .input-row {
-    display: flex;
-    gap: 10px;
-    align-items: flex-end;
-  }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
 
   .input-row textarea {
-    flex: 1;
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 16px;
-    font-family: 'IBM Plex Sans', sans-serif;
-    font-size: 14px;
-    resize: none;
-    outline: none;
-    min-height: 44px;
-    max-height: 120px;
-    line-height: 1.4;
+    flex: 1; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; font-family: inherit; font-size: 13px;
+    resize: none; outline: none;
+    min-height: 40px; max-height: 100px; line-height: 1.4;
   }
 
-  .input-row textarea:focus {
-    border-color: var(--accent);
-  }
-
-  .input-row textarea::placeholder {
-    color: var(--text-dim);
-  }
+  .input-row textarea:focus { border-color: var(--accent); }
+  .input-row textarea::placeholder { color: var(--text-dim); }
 
   .send-btn {
-    width: 44px;
-    height: 44px;
-    background: var(--accent);
-    border: none;
-    border-radius: 10px;
-    color: white;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s;
-    flex-shrink: 0;
+    width: 40px; height: 40px;
+    background: var(--accent); border: none; border-radius: 8px;
+    color: white; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s; flex-shrink: 0;
   }
 
   .send-btn:hover { background: #2563eb; }
   .send-btn:disabled { background: var(--border); cursor: not-allowed; }
+  .send-btn svg { width: 16px; height: 16px; }
 
-  .send-btn svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  /* Welcome message */
-  .welcome {
-    text-align: center;
-    padding: 48px 24px;
-    color: var(--text-dim);
-  }
-
-  .welcome h2 {
-    font-size: 20px;
-    color: var(--text);
-    margin-bottom: 8px;
-  }
-
-  .welcome p {
-    font-size: 14px;
-    max-width: 420px;
-    margin: 0 auto 20px;
-    line-height: 1.6;
-  }
-
-  /* Scrollbar */
-  .chat-area::-webkit-scrollbar { width: 6px; }
-  .chat-area::-webkit-scrollbar-track { background: transparent; }
-  .chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-  /* Briefing panel */
-  .briefing-panel {
-    border-bottom: 1px solid var(--border);
-    background: linear-gradient(135deg, rgba(59,130,246,0.05), rgba(34,197,94,0.03));
-    overflow: hidden;
-  }
-
-  .briefing-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 24px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .briefing-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent);
-  }
-
-  .briefing-meta {
-    display: flex;
-    gap: 8px;
-  }
-
-  .briefing-content {
-    padding: 16px 24px;
-    font-size: 14px;
-    line-height: 1.7;
-    max-height: 220px;
-    overflow-y: auto;
-  }
-
-  .briefing-content h2 {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 12px 0 4px;
-    color: var(--accent);
-  }
-
-  .briefing-content h2:first-child {
-    margin-top: 0;
-  }
-
-  .briefing-content strong {
-    color: var(--text);
-  }
-
-  .briefing-placeholder {
-    color: var(--text-dim);
-    font-style: italic;
-    text-align: center;
-    padding: 12px 0;
-  }
-
-  .briefing-loading {
-    display: none;
-    align-items: center;
-    gap: 10px;
-    padding: 16px 24px;
-    color: var(--text-dim);
-    font-size: 13px;
-  }
-
-  .briefing-loading.active {
-    display: flex;
-  }
-
-  .briefing-content::-webkit-scrollbar { width: 4px; }
-  .briefing-content::-webkit-scrollbar-track { background: transparent; }
-  .briefing-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .briefing-body::-webkit-scrollbar { width: 4px; }
+  .briefing-body::-webkit-scrollbar-track { background: transparent; }
+  .briefing-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 </style>
 </head>
 <body>
 
+<!-- Header -->
 <div class="header">
   <div class="header-left">
-    <div class="logo">CC</div>
+    <div class="logo">CP</div>
     <h1>Clinical Co-Pilot <span>· OpenEMR</span></h1>
   </div>
-  <div class="status-badge">
-    <div class="status-dot"></div>
-    Agent Online
-  </div>
-</div>
-
-<div class="patient-bar">
-  <label>Patient:</label>
-  <select id="patientSelect" onchange="onPatientSelect()">
-    <option value="">Select a patient...</option>
-    <option value="a1a5b7d7-bac2-4eb8-b471-96f0eadb219e">Sarah Smith</option>
-    <option value="a1a5b82c-a50b-4e0d-b86f-4d7d216f6c27">Philip Cramer</option>
-    <option value="a1a5b8f9-7933-44a5-bad1-b4fdf8381d57">Candy Lane</option>
-  </select>
-  <div class="quick-actions">
-    <button class="quick-btn" onclick="sendQuick('Give me a pre-room briefing for this patient.')">Pre-Room Briefing</button>
-    <button class="quick-btn" onclick="sendQuick('What medications is this patient currently on?')">Medications</button>
-    <button class="quick-btn" onclick="sendQuick('What are this patient\'s active conditions?')">Conditions</button>
-    <button class="quick-btn" onclick="sendQuick('Does this patient have any known allergies?')">Allergies</button>
-  </div>
-</div>
-
-<div class="briefing-panel" id="briefingPanel">
-  <div class="briefing-header">
-    <div class="briefing-title">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-      <span>PRE-ROOM BRIEFING</span>
+  <div class="header-right">
+    <div class="patient-select-wrap">
+      <label>Patient:</label>
+      <select id="patientSelect" onchange="onPatientSelect()">
+        <option value="">Select a patient...</option>
+        <option value="a1a5b7d7-bac2-4eb8-b471-96f0eadb219e">Sarah Smith — HTN, diabetes, hyperlipidemia</option>
+        <option value="a1a5b82c-a50b-4e0d-b86f-4d7d216f6c27">Philip Cramer — COPD, AFib, osteoarthritis</option>
+        <option value="a1a5b8f9-7933-44a5-bad1-b4fdf8381d57">Candy Lane — depression, anxiety, migraines</option>
+        <option value="a1a9fb05-f4c5-484e-bcc6-5bfaa9218be1">Robert Williams — depression, anxiety, HTN</option>
+        <option value="a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163">Maria Garcia — diabetes, HTN, back pain</option>
+        <option value="a1a9fb05-f4cb-4b9c-b9ed-ae7a03fc8389">James Thompson — CAD, diabetes, CKD</option>
+        <option value="a1a9fb05-f4cd-49e2-8090-e9720effcc4b">Emily Chen — new patient (sparse chart)</option>
+        <option value="fbaa4958-437f-11f1-9821-62123fdb3c0f">David Nakamura — CAD, HF, diabetes, CKD, AFib</option>
+        <option value="fc6aeb54-437f-11f1-9821-62123fdb3c0f">Angela Washington — lupus, depression, hypothyroid</option>
+      </select>
     </div>
-    <div class="briefing-meta" id="briefingMeta"></div>
-  </div>
-  <div class="briefing-content" id="briefingContent">
-    <div class="briefing-placeholder">Select a patient to auto-generate a 90-second briefing</div>
-  </div>
-  <div class="briefing-loading" id="briefingLoading">
-    <div class="typing-dots">
-      <div class="typing-dot"></div>
-      <div class="typing-dot"></div>
-      <div class="typing-dot"></div>
+    <div class="status-badge">
+      <div class="status-dot"></div>
+      Online
     </div>
-    <span>Generating briefing...</span>
   </div>
 </div>
 
-<div class="chat-area" id="chatArea">
-  <div class="welcome">
-    <h2>Clinical Co-Pilot</h2>
-    <p>Select a patient and ask a question. The agent retrieves data from OpenEMR's FHIR API, cites every claim, and flags anything it can't verify.</p>
-  </div>
-</div>
+<!-- Main -->
+<div class="main">
 
-<div class="typing" id="typing">
-  <div class="typing-dots">
-    <div class="typing-dot"></div>
-    <div class="typing-dot"></div>
-    <div class="typing-dot"></div>
+  <!-- Left: Briefing -->
+  <div class="briefing-side">
+    <div class="briefing-label">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Pre-Room Briefing
+    </div>
+    <div class="briefing-body" id="briefingBody">
+      <div class="briefing-placeholder" id="briefingPlaceholder">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <p>Select a patient to auto-generate a 90-second briefing</p>
+      </div>
+      <div class="briefing-loading" id="briefingLoading">
+        <div class="typing-dots">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        </div>
+        Pulling patient data...
+      </div>
+      <div id="briefingCards" style="display:none;"></div>
+    </div>
   </div>
-</div>
 
-<div class="input-area">
-  <div class="input-row">
-    <textarea id="messageInput" placeholder="Ask about this patient..." rows="1" onkeydown="handleKey(event)"></textarea>
-    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="22" y1="2" x2="11" y2="13"></line>
-        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-      </svg>
-    </button>
+  <!-- Right: Chat -->
+  <div class="chat-side">
+    <div class="chat-header">
+      <div class="chat-header-title">Follow-up Questions</div>
+      <div class="quick-actions">
+        <button class="quick-btn" onclick="sendQuick('What medications is this patient on?')">Meds</button>
+        <button class="quick-btn" onclick="sendQuick('Any recent lab results?')">Labs</button>
+        <button class="quick-btn" onclick="sendQuick('What are the active conditions?')">Conditions</button>
+        <button class="quick-btn" onclick="sendQuick('Any known allergies?')">Allergies</button>
+      </div>
+    </div>
+    <div class="chat-area" id="chatArea">
+      <div class="chat-welcome" id="chatWelcome">
+        Select a patient to begin. The briefing loads automatically on the left.<br>
+        Ask follow-up questions here.
+      </div>
+    </div>
+    <div class="typing" id="typing">
+      <div class="typing-dots">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-row">
+        <textarea id="messageInput" placeholder="Ask about this patient..." rows="1" onkeydown="handleKey(event)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
   </div>
+
 </div>
 
 <script>
 const AGENT_URL = 'http://localhost:8000';
 let conversationHistory = [];
 
+/* ── Auto-briefing on patient select ── */
 async function onPatientSelect() {
   const patientId = document.getElementById('patientSelect').value;
   if (!patientId) return;
 
-  // Reset conversation
   conversationHistory = [];
-  const chatArea = document.getElementById('chatArea');
-  chatArea.innerHTML = '<div class="welcome"><h2>Clinical Co-Pilot</h2><p>The briefing is loading above. Ask follow-up questions below.</p></div>';
+  document.getElementById('chatArea').innerHTML = '';
+  document.getElementById('chatWelcome')?.remove();
 
-  // Show loading in briefing panel
-  const content = document.getElementById('briefingContent');
+  const placeholder = document.getElementById('briefingPlaceholder');
   const loading = document.getElementById('briefingLoading');
-  const meta = document.getElementById('briefingMeta');
-  content.style.display = 'none';
+  const cards = document.getElementById('briefingCards');
+
+  placeholder.style.display = 'none';
+  cards.style.display = 'none';
   loading.classList.add('active');
-  meta.innerHTML = '';
 
   try {
     const resp = await fetch(`${AGENT_URL}/chat`, {
@@ -575,50 +505,99 @@ async function onPatientSelect() {
     });
 
     const data = await resp.json();
-
-    // Render briefing
-    let html = data.response
-      .replace(/## (.*)/g, '<h2>$1</h2>')
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n- /g, '<br>• ')
-      .replace(/\n/g, '<br>');
-
-    content.innerHTML = html;
-    content.style.display = 'block';
     loading.classList.remove('active');
 
-    // Metadata
-    let metaHtml = '';
-    metaHtml += `<span class="meta-tag tools">⚡ ${data.tools_called.length} tools</span>`;
-    metaHtml += `<span class="meta-tag citations">📎 ${data.citations.length} cited</span>`;
-    metaHtml += `<span class="meta-tag tokens">🔤 ${data.tokens_used.total} tokens</span>`;
-    if (data.verified) {
-      metaHtml += `<span class="meta-tag verified">✓ Verified</span>`;
-    } else {
-      metaHtml += `<span class="meta-tag unverified">⚠ Unverified</span>`;
-    }
-    meta.innerHTML = metaHtml;
+    // Parse the response into sections
+    const sections = parseBriefing(data.response);
+    let html = '';
 
-    // Save to conversation history so follow-ups have context
+    for (const section of sections) {
+      html += `
+        <div class="brief-section">
+          <div class="brief-section-label"><div class="dot"></div>${section.label}</div>
+          <div class="brief-card">${section.content}</div>
+        </div>`;
+    }
+
+    // Meta row
+    html += `<div class="brief-meta-row">`;
+    html += `<span class="meta-tag tools">⚡ ${data.tools_called.length} tools</span>`;
+    html += `<span class="meta-tag citations">📎 ${data.citations.length} cited</span>`;
+    html += `<span class="meta-tag tokens">🔤 ${data.tokens_used.total} tokens</span>`;
+    html += data.verified
+      ? `<span class="meta-tag verified">✓ Verified</span>`
+      : `<span class="meta-tag unverified">⚠ Unverified</span>`;
+    html += `</div>`;
+
+    cards.innerHTML = html;
+    cards.style.display = 'block';
+
     conversationHistory.push({ role: 'user', content: 'Give me a pre-room briefing for this patient.' });
     conversationHistory.push({ role: 'assistant', content: data.response });
 
   } catch (err) {
-    content.innerHTML = '<div class="briefing-placeholder">⚠️ Could not reach the agent.</div>';
-    content.style.display = 'block';
     loading.classList.remove('active');
+    placeholder.innerHTML = '<p>⚠️ Could not reach the agent.</p>';
+    placeholder.style.display = 'flex';
   }
 }
 
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+function parseBriefing(text) {
+  // Split response into labeled sections
+  const sections = [];
+  const lines = text.split('\n');
+  let currentLabel = 'Summary';
+  let currentContent = '';
+
+  for (const line of lines) {
+    // Match **LABEL:** or ## LABEL patterns
+    const boldMatch = line.match(/^\*\*([A-Z\s]+?)[:.]?\*\*[:\s]*(.*)/);
+    const headerMatch = line.match(/^##\s+(.*)/);
+
+    if (boldMatch) {
+      if (currentContent.trim()) {
+        sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
+      }
+      currentLabel = boldMatch[1].trim();
+      currentContent = boldMatch[2] || '';
+    } else if (headerMatch) {
+      if (currentContent.trim()) {
+        sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
+      }
+      currentLabel = headerMatch[1].trim();
+      currentContent = '';
+    } else {
+      currentContent += '\n' + line;
+    }
   }
-  // Auto-resize textarea
+
+  if (currentContent.trim()) {
+    sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
+  }
+
+  // If parsing failed, return the whole thing as one section
+  if (sections.length === 0) {
+    sections.push({ label: 'Briefing', content: formatContent(text) });
+  }
+
+  return sections;
+}
+
+function formatContent(text) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n- /g, '<br>• ')
+    .replace(/\n•/g, '<br>•')
+    .replace(/\n/g, '<br>')
+    .replace(/\(([A-Za-z]+ ID: [a-f0-9-]+)\)/g, '<span class="dim">($1)</span>');
+}
+
+/* ── Chat ── */
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   setTimeout(() => {
     e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+    e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
   }, 0);
 }
 
@@ -629,15 +608,12 @@ function sendQuick(msg) {
 
 function addMessage(role, content, meta = null) {
   const chatArea = document.getElementById('chatArea');
-
-  // Remove welcome message
-  const welcome = chatArea.querySelector('.welcome');
+  const welcome = document.getElementById('chatWelcome');
   if (welcome) welcome.remove();
 
   const div = document.createElement('div');
   div.className = `message ${role}`;
 
-  // Convert markdown-like formatting
   let html = content
     .replace(/## (.*)/g, '<h2>$1</h2>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -647,21 +623,13 @@ function addMessage(role, content, meta = null) {
   let metaHtml = '';
   if (meta) {
     metaHtml = '<div class="message-meta">';
-    if (meta.tools_called) {
-      metaHtml += `<span class="meta-tag tools">⚡ ${meta.tools_called.length} tools</span>`;
-    }
-    if (meta.citations !== undefined) {
-      metaHtml += `<span class="meta-tag citations">📎 ${meta.citations} citations</span>`;
-    }
-    if (meta.tokens) {
-      metaHtml += `<span class="meta-tag tokens">🔤 ${meta.tokens} tokens</span>`;
-    }
+    if (meta.tools_called) metaHtml += `<span class="meta-tag tools">⚡ ${meta.tools_called.length} tools</span>`;
+    if (meta.citations !== undefined) metaHtml += `<span class="meta-tag citations">📎 ${meta.citations} cited</span>`;
+    if (meta.tokens) metaHtml += `<span class="meta-tag tokens">🔤 ${meta.tokens}</span>`;
     if (meta.verified !== undefined) {
-      if (meta.verified) {
-        metaHtml += `<span class="meta-tag verified">✓ Verified</span>`;
-      } else {
-        metaHtml += `<span class="meta-tag unverified">⚠ Unverified</span>`;
-      }
+      metaHtml += meta.verified
+        ? `<span class="meta-tag verified">✓ Verified</span>`
+        : `<span class="meta-tag unverified">⚠ Unverified</span>`;
     }
     metaHtml += '</div>';
   }
@@ -677,17 +645,12 @@ async function sendMessage() {
   const message = input.value.trim();
 
   if (!message) return;
-  if (!patientId) {
-    alert('Please select a patient first.');
-    return;
-  }
+  if (!patientId) { alert('Please select a patient first.'); return; }
 
-  // Add user message
   addMessage('user', message);
   input.value = '';
   input.style.height = 'auto';
 
-  // Show typing
   document.getElementById('typing').classList.add('active');
   document.getElementById('sendBtn').disabled = true;
 
@@ -703,12 +666,9 @@ async function sendMessage() {
     });
 
     const data = await resp.json();
-
-    // Update conversation history
     conversationHistory.push({ role: 'user', content: message });
     conversationHistory.push({ role: 'assistant', content: data.response });
 
-    // Add assistant message with metadata
     addMessage('assistant', data.response, {
       tools_called: data.tools_called,
       citations: data.citations ? data.citations.length : 0,
@@ -716,7 +676,7 @@ async function sendMessage() {
       verified: data.verified,
     });
   } catch (err) {
-    addMessage('assistant', '⚠️ Could not reach the agent. Make sure it is running on localhost:8000.');
+    addMessage('assistant', '⚠️ Could not reach the agent.');
   }
 
   document.getElementById('typing').classList.remove('active');
@@ -724,6 +684,5 @@ async function sendMessage() {
   input.focus();
 }
 </script>
-
 </body>
 </html>
