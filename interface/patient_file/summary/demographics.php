@@ -2144,7 +2144,7 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
     <span>⚕️ Clinical Co-Pilot</span>
     <button id="copilot-drawer-close" onclick="document.getElementById('copilot-drawer').classList.remove('open'); document.getElementById('copilot-btn').classList.remove('hidden');">✕</button>
   </div>
-  <iframe src="http://localhost:8000/ui"></iframe>
+  <iframe src="https://agent-copilot.ngrok-free.dev/ui"></iframe>
 </div>
 <script>
 (function(){
