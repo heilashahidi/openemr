@@ -10,7 +10,8 @@ import urllib3
 
 urllib3.disable_warnings()
 
-BASE = "https://openemr-production-8cd1.up.railway.app"
+#BASE = "https://openemr-production-8cd1.up.railway.app"
+BASE = "https://localhost:9300"
 SITE = "default"
 FHIR_URL = f"{BASE}/apis/{SITE}/fhir"
 API_URL = f"{BASE}/apis/{SITE}/api"
@@ -39,6 +40,9 @@ def get_token():
     client = reg.json()
     client_id = client["client_id"]
     client_secret = client["client_secret"]
+    print(f"Secret: {client_secret}")
+    print(f"Full registration response: {json.dumps(client, indent=2)}")
+    
     print(f"Client registered: {client_id}")
     print(f"⚠️  Enable the client in DB: UPDATE oauth_clients SET is_enabled=1 WHERE client_id='{client_id}';")
     input("Press Enter after enabling the client in the database...")
@@ -52,6 +56,7 @@ def get_token():
             "client_secret": client_secret,
             "username": "admin",
             "password": "pass",
+            "user_role": "users",
             "scope": "openid api:oemr api:fhir user/Patient.read user/Patient.write user/Encounter.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Observation.read"
         },
         verify=False
