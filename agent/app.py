@@ -12,6 +12,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from anthropic import Anthropic
+from langsmith.wrappers import wrap_anthropic
+from langsmith.wrappers import wrap_anthropic
+from langsmith.wrappers import wrap_anthropic
 from tools import TOOLS, execute_tool
 from verification import verify_response
 
@@ -32,7 +35,7 @@ OPENEMR_CLIENT_ID = os.getenv("OPENEMR_CLIENT_ID", "")
 OPENEMR_CLIENT_SECRET = os.getenv("OPENEMR_CLIENT_SECRET", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+client = wrap_anthropic(Anthropic(api_key=ANTHROPIC_API_KEY))
 
 # Token cache
 _token_cache = {"token": None, "expires_at": 0}
