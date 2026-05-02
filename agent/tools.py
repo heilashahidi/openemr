@@ -76,6 +76,18 @@ TOOLS = [
             "required": ["patient_id"],
         },
     },
+    {
+        "name": "search_notes",
+        "description": "Search through the patient's clinical notes, encounter history, conditions, and medications using semantic search. Use this when the PCP asks about symptoms, complaints, or clinical history that might be mentioned in free-text notes — for example 'has she ever mentioned chest pain', 'any history of headaches', 'has sleep been discussed'. Do NOT use for structured lookups like current medications or active conditions — use the specific tools for those.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "patient_id": {"type": "string", "description": "Patient UUID"},
+                "query": {"type": "string", "description": "The clinical topic to search for in the patient's notes"}
+            },
+            "required": ["patient_id", "query"],
+        },
+    },
 ]
 
 
@@ -256,11 +268,19 @@ TOOL_FUNCTIONS = {
     "get_allergies": get_allergies,
     "get_recent_encounters": get_recent_encounters,
     "get_recent_labs": get_recent_labs,
+    "search_notes": None,  # handled separately — needs query param
 }
 
 
 def execute_tool(tool_name, tool_input, token, base_url):
     """Execute a tool by name."""
+    # search_notes is special — uses RAG module
+    if tool_name == "search_notes":
+        from rag import search_notes
+        patient_id = tool_input.get("patient_id", "")
+        query = tool_input.get("query", "")
+        return search_notes(patient_id, query, token, base_url)
+
     func = TOOL_FUNCTIONS.get(tool_name)
     if not func:
         return {"success": False, "error": f"Unknown tool: {tool_name}", "citations": []}

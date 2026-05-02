@@ -14,12 +14,6 @@ from pydantic import BaseModel
 from anthropic import Anthropic
 from tools import TOOLS, execute_tool
 from verification import verify_response
-from langsmith import traceable
-
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
-
 
 urllib3.disable_warnings()
 
@@ -38,9 +32,7 @@ OPENEMR_CLIENT_ID = os.getenv("OPENEMR_CLIENT_ID", "")
 OPENEMR_CLIENT_SECRET = os.getenv("OPENEMR_CLIENT_SECRET", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-from langsmith.wrappers import wrap_anthropic
-client = wrap_anthropic(Anthropic(api_key=ANTHROPIC_API_KEY))
-
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # Token cache
 _token_cache = {"token": None, "expires_at": 0}
@@ -86,6 +78,11 @@ RULES:
 7. If a tool fails, say what failed and suggest the PCP check the chart directly.
 8. Never make up medication names, lab values, or diagnoses not in the data.
 
+TOOL SELECTION:
+- For structured data (current medications, active conditions, allergies, lab values, vitals): use the specific structured tools (get_active_medications, get_active_conditions, get_allergies, get_recent_labs).
+- For unstructured/historical questions (has the patient ever mentioned a symptom, any history of a complaint, what was discussed at prior visits, symptom patterns over time): use search_notes.
+- For briefings: call structured tools first, then search_notes if the visit reason suggests a topic worth searching notes for.
+
 When the PCP asks for a briefing, call tools in this order:
 1. get_active_conditions - to know chronic conditions
 2. get_active_medications - current med list
@@ -114,7 +111,6 @@ class ChatResponse(BaseModel):
     verified: bool
 
 
-@traceable(name="clinical_copilot_chat")
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """Main chat endpoint. PCP sends a question about a patient."""
@@ -129,6 +125,7 @@ async def chat(req: ChatRequest):
     for msg in req.conversation_history:
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": f"[Patient ID: {req.patient_id}]\n\n{req.message}"})
+
 
     # Tool definitions for Claude
     tool_defs = [
@@ -214,12 +211,7 @@ async def chat(req: ChatRequest):
 
     raise HTTPException(status_code=500, detail="Agent exceeded max iterations")
 
-@app.get("/ui")
-async def ui():
-    return FileResponse("chat.html")
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
