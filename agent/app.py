@@ -9,6 +9,7 @@ import time
 import requests
 import urllib3
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from anthropic import Anthropic
@@ -214,6 +215,10 @@ async def chat(req: ChatRequest):
 
     raise HTTPException(status_code=500, detail="Agent exceeded max iterations")
 
+
+@app.get("/ui")
+async def ui():
+    return FileResponse("chat.html")
 
 @app.get("/health")
 async def health():
