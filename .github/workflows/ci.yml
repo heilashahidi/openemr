@@ -1,0 +1,131 @@
+name: Clinical Co-Pilot CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'agent/**'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'agent/**'
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    name: Lint & Validate Agent Code
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd agent
+          pip install -r requirements.txt
+          pip install chromadb
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile agent/app.py
+          python -m py_compile agent/tools.py
+          python -m py_compile agent/verification.py
+          python -m py_compile agent/rag.py
+          python -m py_compile agent/eval_suite.py
+          python -m py_compile agent/test_rag.py
+          echo "✅ All Python files compile successfully"
+
+      - name: Validate tool definitions
+        run: |
+          python -c "
+          from agent.tools import TOOLS, TOOL_FUNCTIONS
+          assert len(TOOLS) == 7, f'Expected 7 tools, got {len(TOOLS)}'
+          for t in TOOLS:
+              assert 'name' in t, f'Tool missing name: {t}'
+              assert 'description' in t, f'Tool missing description: {t}'
+              assert 'input_schema' in t, f'Tool missing input_schema: {t}'
+          print(f'✅ {len(TOOLS)} tools validated')
+          print('Tools:', [t[\"name\"] for t in TOOLS])
+          "
+
+      - name: Validate verification layer
+        run: |
+          python -c "
+          from agent.verification import verify_response
+          # Test 1: Clean response with citations passes
+          ok, resp = verify_response('Patient has hypertension', [{'id': 'abc-123', 'resource': 'Condition'}])
+          assert ok == True, 'Clean response should pass'
+          
+          # Test 2: Clinical advice gets flagged
+          ok, resp = verify_response('I recommend prescribing lisinopril', [])
+          assert ok == False, 'Clinical advice should be flagged'
+          assert 'Verification note' in resp
+          
+          # Test 3: Claims without citations get flagged
+          ok, resp = verify_response('Patient is on metformin 500mg twice daily', [])
+          assert ok == False, 'Claims without citations should be flagged'
+          
+          print('✅ Verification layer: 3/3 checks passed')
+          "
+
+      - name: Validate RAG module
+        run: |
+          python -c "
+          from agent.rag import init_collection, search_notes
+          collection = init_collection()
+          assert collection is not None, 'Collection should initialize'
+          print('✅ ChromaDB collection initialized successfully')
+          "
+
+      - name: Check eval suite structure
+        run: |
+          python -c "
+          from agent.eval_suite import TEST_CASES
+          categories = {}
+          for t in TEST_CASES:
+              prefix = t['id'].split('-')[0]
+              categories[prefix] = categories.get(prefix, 0) + 1
+          
+          assert len(TEST_CASES) == 30, f'Expected 30 test cases, got {len(TEST_CASES)}'
+          assert categories.get('TS', 0) == 8, 'Expected 8 Tool Selection tests'
+          assert categories.get('SC', 0) == 7, 'Expected 7 Source Citation tests'
+          assert categories.get('CV', 0) == 8, 'Expected 8 Content Validation tests'
+          assert categories.get('NV', 0) == 7, 'Expected 7 Negative Validation tests'
+          print(f'✅ Eval suite: {len(TEST_CASES)} test cases across {len(categories)} categories')
+          print(f'   Tool Selection: {categories[\"TS\"]}')
+          print(f'   Source Citation: {categories[\"SC\"]}')
+          print(f'   Content Validation: {categories[\"CV\"]}')
+          print(f'   Negative Validation: {categories[\"NV\"]}')
+          "
+
+      - name: Check RAG test suite structure
+        run: |
+          python -c "
+          from agent.test_rag import TESTS
+          categories = {}
+          for t in TESTS:
+              prefix = t['id'].split('-')[0]
+              categories[prefix] = categories.get(prefix, 0) + 1
+          
+          assert len(TESTS) == 18, f'Expected 18 RAG tests, got {len(TESTS)}'
+          print(f'✅ RAG test suite: {len(TESTS)} test cases')
+          for cat, count in categories.items():
+              print(f'   {cat}: {count}')
+          "
+
+      - name: Summary
+        run: |
+          echo "========================================"
+          echo "  CI Pipeline Complete"
+          echo "========================================"
+          echo "  ✅ Python syntax valid"
+          echo "  ✅ 7 tools validated"
+          echo "  ✅ Verification layer working"
+          echo "  ✅ ChromaDB initializes"
+          echo "  ✅ 30 eval test cases structured"
+          echo "  ✅ 18 RAG test cases structured"
+          echo "========================================"
