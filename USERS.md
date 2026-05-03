@@ -26,7 +26,7 @@ This user is not a generalized "physician." Specialty providers (cardiology, onc
 
 ## The Workflow Moment
 
-The agent is designed around four moments in Dr. M's day:
+The agent is designed around eight moments in Dr. M's day, organized from most to least frequent:
 
 1. **Pre-room (primary).** Patient is roomed by the medical assistant. Dr. M is at the workstation outside the room, with 60-90 seconds before walking in. The chart is open. The agent is asked: *what do I need to know about this visit?*
 
@@ -105,6 +105,56 @@ Each use case below traces to one of the four workflow moments above. Each capab
 
 **Limitation worth naming:** The recap can only reflect what Dr. M has captured. If little is typed during the visit, the recap will be thin. This is an honest property of any EHR-based agent and is communicated transparently rather than disguised.
 
+### Use Case 5 — Clinical history search (RAG)
+
+**Moment:** Any time during or between visits when Dr. M needs to know whether a symptom, complaint, or topic has appeared previously in the patient's record.
+
+**Trigger:** "Has this patient ever mentioned chest pain?", "Any history of headaches?", "Has sleep been discussed before?"
+
+**Agent inputs:** A natural-language query describing the clinical topic, plus semantic search access to the patient's encounter notes, condition history, and medication records via ChromaDB.
+
+**Agent output:** Relevant excerpts from the patient's history with dates and encounter citations. If the topic has never appeared, the agent reports silence: "No mentions of chest pain documented in the record."
+
+**Why an agent, not keyword search:** Clinical notes express the same concept in many ways — "SOB," "shortness of breath," "dyspnea," "trouble breathing." Semantic search via embeddings finds conceptual matches that keyword search misses. The agent also connects results to the broader clinical picture: finding neuropathy symptoms and linking them to the patient's diabetes diagnosis.
+
+**Tools used:** `search_notes` (ChromaDB semantic search with mandatory patient_id filter).
+
+### Use Case 6 — Cross-domain clinical reasoning
+
+**Moment:** During a visit when the presenting complaint could be explained by multiple conditions in the patient's history.
+
+**Trigger:** "This patient is here for leg swelling. What in their history might explain it?", "The patient's kidney function seems worse — what factors might be contributing?"
+
+**Agent inputs:** The presenting symptom or concern, plus the patient's full structured record (conditions, medications, labs, encounters) and unstructured note history (via RAG).
+
+**Agent output:** A synthesized clinical narrative connecting the presenting complaint to relevant conditions, medications, and prior encounters. Citations to each data source. The agent does not diagnose — it surfaces the documented data and lets Dr. M draw clinical conclusions.
+
+**Why an agent, not a dashboard:** This requires reasoning across multiple data domains simultaneously — correlating a symptom with conditions, medications, lab trends, and prior visit notes. A dashboard shows each domain in isolation; the agent synthesizes them into a coherent picture. For example, leg swelling in a patient with HF (EF 35%), CKD stage 3a, AFib, and furosemide on board is a different clinical picture than leg swelling in an otherwise healthy patient.
+
+**Tools used:** `get_active_conditions`, `get_active_medications`, `get_recent_labs`, `search_notes` — typically all four in a single query.
+
+### Use Case 7 — New patient onboarding
+
+**Moment:** Before the first visit with a patient who is new to Dr. M's practice, or a patient with a very sparse chart.
+
+**Trigger:** Dr. M opens a new patient's chart. The agent detects minimal or no prior data.
+
+**Agent output:** The agent honestly reports what is and isn't available: "New patient visit. Headaches for 3 months is the stated reason. No prior conditions, medications, allergies, or lab results documented in this system." This tells Dr. M that the history needs to be gathered during the visit — the agent doesn't fill the gap with assumptions.
+
+**Why an agent, not nothing:** Even the absence of data is clinically informative. Knowing that this is a blank slate — not a patient with a missed chart transfer — shapes how Dr. M approaches the visit. The agent's silence-handling behavior is the feature: it confirms the record is empty rather than leaving Dr. M uncertain about whether they missed something.
+
+**Tools used:** All structured tools return empty. `search_notes` returns no results. The verification layer confirms silence is reported honestly.
+
+### Use Case 8 — Safety guardrails and scope enforcement
+
+**Moment:** Any time Dr. M asks the agent for something outside its scope — clinical advice, diagnostic opinions, prescribing recommendations.
+
+**Trigger:** "What medication should I prescribe?", "I think she has bipolar — do you agree?", "Should I increase the dose?"
+
+**Agent output:** The agent declines to provide clinical advice. It may surface relevant data — "the patient is currently on sertraline 100mg, prescribed February 2020" — but does not recommend treatment changes, confirm or deny diagnostic impressions, or suggest specific prescriptions. The verification layer flags and labels any response that crosses into clinical advice territory.
+
+**Why this is a use case, not just a constraint:** In a clinical setting, the boundary between "what does the record say" and "what should I do" is crossed constantly. The agent must handle these transitions gracefully — declining the advice request while still being useful by surfacing the relevant data. A hard refusal ("I can't help with that") is less useful than a redirect ("I can't recommend a medication, but here's what the patient is currently on and their relevant history").
+
 ---
 
 ## How the use cases compound
@@ -122,7 +172,7 @@ The agent's read-only constraint is preserved throughout. The chart grows becaus
 ## Scope and Non-Goals (v1)
 
 In scope:
-- The four use cases above, all for a single user role (PCP).
+- The eight use cases above, all for a single user role (PCP).
 - Read-only agent. The agent reads the patient record and reasons over it; it does not write notes, place orders, or modify chart data. The patient record continues to be updated by humans (PCPs, nurses, lab interfaces, pharmacy systems) through OpenEMR's existing interfaces, exactly as it would be without the agent. The agent reads the current state of the record at the moment of each query.
 - Patient-stated reason for visit treated as untrusted input — surfaced to Dr. M as a signal, not acted on as ground truth, and handled with awareness that free-text patient input is a prompt injection surface.
 - HIPAA-aware architecture. Every architectural decision in v1 is consistent with HIPAA's Security and Privacy Rules, and no decision creates compliance debt that a production deployment would have to undo. v1 does not claim certified HIPAA compliance — that posture requires signed BAAs, formal risk assessment, breach notification procedures, workforce training, physical safeguards, and ongoing audit, none of which are in scope for a one-week academic build. Per the case study's standing assumption, BAAs with LLM providers are treated as in place. Detailed compliance treatment lives in AUDIT.md and ARCHITECTURE.md.
@@ -144,14 +194,18 @@ Explicitly out of scope for v1 (some likely future work):
 
 | Agent capability | Justified by use case |
 |---|---|
-| Multi-turn conversation | UC3 (mid-visit pivot), UC4 (recap follow-ups) |
-| Tool calling for record retrieval | UC1, UC2, UC3 |
+| Multi-turn conversation | UC3 (mid-visit pivot), UC4 (recap follow-ups), UC6 (cross-domain reasoning) |
+| Structured FHIR tool calling | UC1, UC2, UC3, UC6 |
+| RAG semantic search over notes (search_notes) | UC5 (history search), UC6 (cross-domain reasoning) |
+| Hybrid retrieval (structured + RAG in single query) | UC6 (cross-domain reasoning) |
 | Source citation on every claim | All UCs (verification requirement) |
 | Visit-reason awareness | UC1, UC4 |
-| Chronic condition awareness regardless of visit reason | UC1, UC3 |
+| Chronic condition awareness regardless of visit reason | UC1, UC3, UC6 |
 | Low-latency factual lookup | UC2 |
 | Reasoning over visit events (not just records) | UC4 |
-| Graceful handling of record silence (no inference, no speculation) | All UCs (verification requirement; "Handling information gaps") |
+| Graceful handling of record silence (no inference, no speculation) | UC7 (new patient), all UCs |
+| Safety guardrails — no clinical advice, no diagnosis | UC8 (scope enforcement) |
+| Verification layer on every response | All UCs |
 | HIPAA-aware data handling, audit logging, role-based access | All UCs (Scope: HIPAA-aware architecture) |
 
 ARCHITECTURE.md will reference this table. Any agent capability built that does not appear in this table is either an omission to be added here, or a scope creep to be cut.

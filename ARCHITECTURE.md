@@ -25,7 +25,7 @@ The Clinical Co-Pilot is a read-only conversational AI agent for primary care ph
 ## 1. Goals and Non-Goals
 
 ### Goals
-- Serve the four use cases in `USERS.md` (pre-room briefing, mid-visit factual lookup, mid-visit pivot, post-visit recap) for a PCP user.
+- Serve the eight use cases in `USERS.md` (pre-room briefing, mid-visit factual lookup, mid-visit pivot, post-visit recap, clinical history search, cross-domain reasoning, new patient onboarding, safety guardrails) for a PCP user.
 - Every claim grounded in the patient's FHIR record, with verifiable citations.
 - Authorization inherited from the clinician's OAuth2 token — the agent never extends access.
 - Observability on every invocation: tools called, latency, tokens, citations.
@@ -166,12 +166,12 @@ Six structured tools plus one RAG tool:
 | Tool | FHIR Endpoint | What it returns | Use cases |
 |---|---|---|---|
 | `get_patient_summary` | `Patient/{uuid}` | Name, DOB, sex | All |
-| `get_active_conditions` | `Condition?patient={uuid}` | Active problems with ICD codes, onset dates | UC1, UC2, UC3 |
-| `get_active_medications` | `MedicationRequest?patient={uuid}&status=active` | Drug names, dosages, start dates | UC1, UC2, UC3 |
+| `get_active_conditions` | `Condition?patient={uuid}` | Active problems with ICD codes, onset dates | UC1, UC2, UC3, UC6 |
+| `get_active_medications` | `MedicationRequest?patient={uuid}&status=active` | Drug names, dosages, start dates | UC1, UC2, UC3, UC6 |
 | `get_allergies` | `AllergyIntolerance?patient={uuid}` | Substances, clinical status | UC1, UC2, UC3 |
-| `get_recent_encounters` | `Encounter?patient={uuid}&_sort=-date&_count=5` | Visit dates, reasons, types | UC1, UC3, UC4 |
-| `get_recent_labs` | `Observation?patient={uuid}&category=laboratory&_sort=-date&_count=10` | Lab names, values, units, dates | UC1, UC2 |
-| `search_notes` | ChromaDB over FHIR data | Semantic search results with encounter citations | UC3 |
+| `get_recent_encounters` | `Encounter?patient={uuid}&_sort=-date&_count=5` | Visit dates, reasons, types | UC1, UC3, UC4, UC6 |
+| `get_recent_labs` | `Observation?patient={uuid}&category=laboratory&_sort=-date&_count=10` | Lab names, values, units, dates | UC1, UC2, UC6 |
+| `search_notes` | ChromaDB over FHIR data | Semantic search results with encounter citations | UC3, UC5, UC6 |
 
 ### RAG — Semantic Note Search
 
@@ -272,7 +272,9 @@ The one failure (CV-06) is a data formatting issue: allergy substances were seed
 
 **Golden sets** define expected data per patient — known conditions, medications, and allergies verified against the seeded database. The eval suite validates the agent's responses against these known facts.
 
-**What the eval catches that a demo wouldn't:** Cross-patient data leakage (Emily Chen should never show metformin — she has no medications). Hallucinated lab values (no labs are seeded, so any specific A1c value is fabricated). Prescribing advice (the agent should never say "I recommend prescribing").
+**What the eval catches that a demo wouldn't:** Cross-patient data leakage (Emily Chen should never show metformin — she has no medications). Hallucinated lab values (no labs are seeded, so any specific A1c value is fabricated). Prescribing advice (the agent should never say "I recommend prescribing"). Invalid patient UUID handling (the agent should not produce clinical data for nonexistent patients). Diagnostic overreach (the agent should not confirm or deny diagnostic impressions). Silence violation (empty charts must be reported as empty, not filled with inferred data).
+
+**Adversarial test coverage:** The Negative Validation suite specifically tests failure modes that a happy-path demo would hide: NV-01 tests prescribing advice refusal, NV-02 tests hallucination prevention on empty charts, NV-03 tests fabricated lab values, NV-04 tests diagnostic boundary enforcement, NV-05 tests cross-patient data isolation, NV-06 tests invalid patient handling, NV-07 tests allergy hallucination. The RAG silence tests (SIL-01, SIL-02) verify that semantic search doesn't surface data from other patients or fabricate history.
 
 ---
 
@@ -336,7 +338,48 @@ Principle: **the agent never silently hides a failure.** Partial answers are exp
 
 ---
 
-## 12. Defending This Architecture
+## 12. Deployment
+
+### Current (Demo)
+
+Two ngrok tunnels exposing local services:
+- **OpenEMR:** `https://backlog-troubling-unfold.ngrok-free.dev` → localhost:9300 (PHP/Apache/MariaDB via Docker)
+- **Agent:** `https://agent-copilot.ngrok-free.dev` → localhost:8000 (Python/FastAPI/uvicorn)
+
+The agent is embedded in OpenEMR via an iframe in `demographics.php`. The PCP sees one application.
+
+**Limitations:** ngrok tunnels are ephemeral — they die when the terminal closes. No persistent storage for ChromaDB. Single process, no redundancy.
+
+### Production Path
+
+A production deployment at a 500-bed hospital would use:
+
+**Infrastructure:**
+- OpenEMR on a managed VM or Kubernetes pod behind a load balancer with TLS termination. MariaDB on managed database service (AWS RDS or equivalent) with automated backups and encryption at rest.
+- Agent service containerized (Docker) and deployed as 2-4 replicas behind a load balancer. Stateless — scales horizontally. Health checks on `/health` endpoint.
+- pgvector on managed Postgres for persistent RAG storage. Replaces in-memory ChromaDB. Patient data indexed incrementally, not on every restart.
+
+**Security:**
+- Both services on the same private network (VPC). No public exposure of the agent service — only accessible from OpenEMR's internal network.
+- OAuth2 token relay from OpenEMR to agent. Agent never stores tokens — validates per request.
+- TLS everywhere. Encryption at rest for all databases.
+- WAF in front of OpenEMR for prompt injection defense on patient-facing inputs.
+
+**Observability:**
+- Self-hosted Langfuse (replaces LangSmith) for HIPAA-compliant trace storage with 6-year retention.
+- Prometheus + Grafana for infrastructure metrics (latency, error rate, token usage).
+- PagerDuty integration for agent downtime alerts.
+
+**Scaling estimates:**
+- 300 concurrent clinicians × 3 queries/patient × 20 patients/day = ~18,000 queries/day
+- At 8s average latency and 4 replicas, each replica handles ~4,500 queries/day (~1 query every 19 seconds) — well within capacity.
+- LLM provider rate limits become the binding constraint. Provisioned throughput or a request queue with graceful degradation would be required.
+
+**CI/CD:**
+- GitHub Actions runs syntax checks, tool validation, and verification unit tests on every push (already implemented).
+- Production adds: eval suite gate (block deploy if pass rate < 95%), staging environment for shadow-mode testing, blue-green deploys for zero-downtime updates.
+
+## 13. Defending This Architecture
 
 **"Why sidecar instead of embedded?"** OpenEMR is PHP. The agent is Python. Sidecar means I can update, restart, or scale the agent without touching OpenEMR. If the agent crashes, OpenEMR still works. The only integration point is one iframe — minimal surface, maximum independence.
 
