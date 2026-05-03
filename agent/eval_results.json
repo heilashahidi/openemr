@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-05-02 16:06:19",
+  "timestamp": "2026-05-03 09:44:04",
   "summary": {
     "total": 30,
     "passed": 29,
     "failed": 1,
     "pass_rate": "96.7%",
-    "total_time": 232.37,
-    "total_tokens": 134020
+    "total_time": 234.21,
+    "total_tokens": 128201
   },
   "by_category": {
     "Tool Selection": {
@@ -32,7 +32,7 @@
       "name": "Tool Selection: Briefing calls multiple tools",
       "passed": true,
       "failures": [],
-      "elapsed": 12.82,
+      "elapsed": 13.83,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -41,80 +41,80 @@
         "get_recent_labs"
       ],
       "citations_count": 17,
-      "tokens": 5573,
-      "response_preview": "## Pre-Room Briefing\n\n**TODAY:** The patient indicated they are here for an annual physical (encounter ID: df2124c1-42ed-11f1-9821-62123fdb3c0f).\n\n**CHANGES:** Last seen March 2026 for diabetes follow"
+      "tokens": 5509,
+      "response_preview": "## Pre-Room Briefing\n\n**TODAY:** The patient indicated they are here for an annual physical (encounter ID: df2124c1-42ed-11f1-9821-62123fdb3c0f).\n\n**CHANGES:** Since the last diabetes follow-up in Mar"
     },
     {
       "id": "TS-02",
       "name": "Tool Selection: Medication question calls medication tool",
       "passed": true,
       "failures": [],
-      "elapsed": 5.88,
+      "elapsed": 7.37,
       "tools_called": [
         "get_active_medications"
       ],
       "citations_count": 7,
-      "tokens": 4086,
-      "response_preview": "The patient is currently on the following active medications:\n\n1. **Tiotropium 18mcg** - 18mcg inhaled daily (ID: a1ab6c70-92a8-4463-ac74-0ccd2667c13d)\n2. **Apixaban 5mg** - 5mg twice daily (ID: a1ab6"
+      "tokens": 4135,
+      "response_preview": "This patient is currently on the following active medications:\n\n1. **Tiotropium 18mcg** - 18mcg inhaled daily (Source: a1ab6c70-92a8-4463-ac74-0ccd2667c13d)\n2. **Apixaban 5mg** - 5mg twice daily (Sour"
     },
     {
       "id": "TS-03",
       "name": "Tool Selection: Condition question calls condition tool",
       "passed": true,
       "failures": [],
-      "elapsed": 5.89,
+      "elapsed": 7.18,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 6,
-      "tokens": 3915,
-      "response_preview": "The patient's active medical problems are:\n\n1. **Asthma, unspecified** - onset April 20, 2018 (ID: 59bc83dd-42ee-11f1-9821-62123fdb3c0f)\n2. **Major depressive disorder, recurrent** - onset April 10, 2"
+      "tokens": 3974,
+      "response_preview": "This patient has the following active medical problems:\n\n1. **Asthma, unspecified** - onset April 20, 2018 (ID: 59bc83dd-42ee-11f1-9821-62123fdb3c0f)\n2. **Major depressive disorder, recurrent** - onse"
     },
     {
       "id": "TS-04",
       "name": "Tool Selection: Allergy question calls allergy tool",
       "passed": true,
       "failures": [],
-      "elapsed": 5.78,
+      "elapsed": 6.69,
       "tools_called": [
         "get_allergies"
       ],
       "citations_count": 3,
-      "tokens": 3394,
-      "response_preview": "Yes, this patient has allergies documented in the record, but the specific substances are listed as \"Unknown\" for all three active allergy entries (FHIR IDs: a1ab6c70-3d33-43c5-96eb-a4f827890ad3, a1ab"
+      "tokens": 3421,
+      "response_preview": "Yes, this patient has documented allergies, though the specific substances are listed as \"Unknown\" in the record. There are 3 active allergy entries documented (FHIR IDs: a1ab6c70-3d33-43c5-96eb-a4f82"
     },
     {
       "id": "TS-05",
       "name": "Tool Selection: Lab question calls lab tool",
       "passed": true,
       "failures": [],
-      "elapsed": 3.56,
+      "elapsed": 3.55,
       "tools_called": [
         "get_recent_labs"
       ],
       "citations_count": 0,
-      "tokens": 3158,
-      "response_preview": "No laboratory results documented in the record for this patient.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
+      "tokens": 3183,
+      "response_preview": "No recent laboratory results are documented in the record for this patient.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
     },
     {
       "id": "TS-06",
       "name": "Tool Selection: Visit history calls encounter tool",
       "passed": true,
       "failures": [],
-      "elapsed": 4.28,
+      "elapsed": 4.51,
       "tools_called": [
         "get_recent_encounters"
       ],
       "citations_count": 5,
-      "tokens": 3617,
-      "response_preview": "The reason for this patient's last visit on April 27, 2026 was \"Joint pain flare, fatigue worsening, rash on cheeks\" (encounter ID: a1ab6c70-4195-4ad5-92ce-dc818c508f94)."
+      "tokens": 3622,
+      "response_preview": "The patient's most recent visit was on April 27, 2026. The patient indicated they were there for \"Joint pain flare, fatigue worsening, rash on cheeks\" (encounter ID: a1ab6c70-4195-4ad5-92ce-dc818c508f"
     },
     {
       "id": "TS-07",
       "name": "Tool Selection: Complex briefing calls 4+ tools",
       "passed": true,
       "failures": [],
-      "elapsed": 13.72,
+      "elapsed": 13.92,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -123,28 +123,28 @@
         "get_recent_labs"
       ],
       "citations_count": 29,
-      "tokens": 6550,
-      "response_preview": "## PRE-ROOM BRIEFING\n\n**TODAY:** The patient indicated they are here for \"Swelling in legs worse, gained 5 lbs in a week\" (encounter a1ab6c70-4187-46c0-a097-ac822ba07810).\n\n**CHANGES:** Concerning pat"
+      "tokens": 6657,
+      "response_preview": "## PRE-ROOM BRIEFING\n\n**TODAY:** The patient indicated they are here for \"Swelling in legs worse, gained 5 lbs in a week\" (encounter a1ab6c70-4187-46c0-a097-ac822ba07810).\n\n**CHANGES:** \n- Last visit "
     },
     {
       "id": "TS-08",
       "name": "Tool Selection: Patient summary calls patient tool",
       "passed": true,
       "failures": [],
-      "elapsed": 5.07,
+      "elapsed": 4.61,
       "tools_called": [
         "get_patient_summary"
       ],
       "citations_count": 1,
-      "tokens": 3305,
-      "response_preview": "**Patient Demographics:**\n\n- **Name:** Maria Garcia\n- **Date of Birth:** March 15, 1968 (Age 56)\n- **Sex:** Female\n- **Patient ID:** a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163\n\n*Source: Patient summary (ID:"
+      "tokens": 3273,
+      "response_preview": "The patient demographics are:\n\n- **Name**: Maria Garcia\n- **Date of Birth**: March 15, 1968 (age 56)\n- **Sex**: Female\n- **Patient ID**: a1a9fb05-f4c8-4e18-bf81-76dc9b8aa163\n\nNote: Address and phone n"
     },
     {
       "id": "SC-01",
       "name": "Source Citation: Briefing has citations",
       "passed": true,
       "failures": [],
-      "elapsed": 11.79,
+      "elapsed": 13.11,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -153,67 +153,67 @@
         "get_recent_labs"
       ],
       "citations_count": 17,
-      "tokens": 5490,
-      "response_preview": "## PRE-ROOM BRIEFING\n\n**TODAY:** Patient is here for their annual physical exam (df2124c1-42ed-11f1-9821-62123fdb3c0f).\n\n**CHANGES:** Recently started Lisinopril 10mg daily in April 2026 (b105ae0f-42e"
+      "tokens": 5630,
+      "response_preview": "## Pre-Room Briefing\n\n**TODAY:** The patient indicated they are here for an annual physical (encounter ID: df2124c1-42ed-11f1-9821-62123fdb3c0f).\n\n**CHANGES:** Last visit was March 15, 2026 for diabet"
     },
     {
       "id": "SC-02",
       "name": "Source Citation: Medication response cites sources",
       "passed": true,
       "failures": [],
-      "elapsed": 8.52,
+      "elapsed": 6.56,
       "tools_called": [
         "get_active_medications"
       ],
       "citations_count": 11,
-      "tokens": 4535,
-      "response_preview": "This patient is on the following active medications (sources: medication IDs from OpenEMR):\n\n**Diabetes management:**\n- Insulin glargine 30 units subcutaneous at bedtime (ID: a1ab6c70-92c7-41a5-8f16-8"
+      "tokens": 4259,
+      "response_preview": "This patient is currently on 11 active medications (source: medication records a1ab6c70-92c7-41a5-8f16-8a6e83f98e67 through a1ab6c70-92dc-4bb4-9be6-0df57e99ab30):\n\n**Diabetes medications:**\n- Insulin "
     },
     {
       "id": "SC-03",
       "name": "Source Citation: Condition response cites sources",
       "passed": true,
       "failures": [],
-      "elapsed": 7.18,
+      "elapsed": 7.47,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 8,
-      "tokens": 4156,
-      "response_preview": "This patient has the following active conditions:\n\n1. **Systemic lupus erythematosus** - onset July 2016 (ID: a1ab6c70-3d3a-43ad-ad99-593403c71da9)\n2. **Lupus nephritis class III** - onset November 20"
+      "tokens": 4140,
+      "response_preview": "The patient has the following active conditions:\n\n**Rheumatologic/Autoimmune:**\n- Systemic lupus erythematosus (onset July 2016) - ID: a1ab6c70-3d3a-43ad-ad99-593403c71da9\n- Lupus nephritis class III "
     },
     {
       "id": "SC-04",
       "name": "Source Citation: Allergy response cites sources",
       "passed": true,
       "failures": [],
-      "elapsed": 5.44,
+      "elapsed": 5.61,
       "tools_called": [
         "get_allergies"
       ],
       "citations_count": 3,
-      "tokens": 3402,
-      "response_preview": "This patient has three documented allergies, all listed as \"Unknown\" substances with active status (FHIR IDs: 59bc052b-42ee-11f1-9821-62123fdb3c0f, a1ab6c70-3d06-4334-9075-1f1306120528, a1ab6c70-3d08-"
+      "tokens": 3406,
+      "response_preview": "This patient has three documented allergies, but unfortunately all are listed as \"Unknown\" substance (allergy IDs: 59bc052b-42ee-11f1-9821-62123fdb3c0f, a1ab6c70-3d06-4334-9075-1f1306120528, and a1ab6"
     },
     {
       "id": "SC-05",
       "name": "Source Citation: Encounter response cites sources",
       "passed": true,
       "failures": [],
-      "elapsed": 3.87,
+      "elapsed": 4.93,
       "tools_called": [
         "get_recent_encounters"
       ],
       "citations_count": 5,
-      "tokens": 3565,
-      "response_preview": "The patient's most recent visit was on April 28, 2026, for an \"Annual wellness exam\" (encounter ID: 59bcc966-42ee-11f1-9821-62123fdb3c0f)."
+      "tokens": 3605,
+      "response_preview": "The patient's most recent visit was on **April 28, 2026** for an **Annual wellness exam** (encounter ID: 59bcc966-42ee-11f1-9821-62123fdb3c0f)."
     },
     {
       "id": "SC-06",
       "name": "Source Citation: Empty record has no false citations",
       "passed": true,
       "failures": [],
-      "elapsed": 3.29,
+      "elapsed": 3.79,
       "tools_called": [
         "get_active_medications"
       ],
@@ -226,7 +226,7 @@
       "name": "Source Citation: Complex patient has many citations",
       "passed": true,
       "failures": [],
-      "elapsed": 12.57,
+      "elapsed": 13.93,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -235,54 +235,54 @@
         "get_recent_labs"
       ],
       "citations_count": 29,
-      "tokens": 6467,
-      "response_preview": "## PRE-ROOM BRIEFING\n\n**TODAY:** The patient indicated they are here for worsening leg swelling and 5-pound weight gain over one week (encounter a1ab6c70-4187-46c0-a097-ac822ba07810).\n\n**CHANGES:** Th"
+      "tokens": 6507,
+      "response_preview": "## PRE-ROOM BRIEFING\n\n**TODAY:** The patient indicated they are here for worsening leg swelling and 5-pound weight gain over the past week (encounter a1ab6c70-4187-46c0-a097-ac822ba07810).\n\n**CHANGES:"
     },
     {
       "id": "CV-01",
       "name": "Content: Sarah's conditions are correct",
       "passed": true,
       "failures": [],
-      "elapsed": 6.47,
+      "elapsed": 5.63,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 5,
-      "tokens": 3846,
-      "response_preview": "This patient has the following active conditions:\n\n1. **Hypertension** - onset January 15, 2024 (FHIR ID: 8d6c91d1-42ed-11f1-9821-62123fdb3c0f)\n2. **Type 2 diabetes mellitus** - onset March 10, 2022 ("
+      "tokens": 3785,
+      "response_preview": "The patient has 5 active conditions:\n\n1. **Hypertension** - onset January 15, 2024 (ID: 8d6c91d1-42ed-11f1-9821-62123fdb3c0f)\n2. **Type 2 diabetes mellitus** - onset March 10, 2022 (ID: a1ab6c70-3c50-"
     },
     {
       "id": "CV-02",
       "name": "Content: Philip's COPD and AFib present",
       "passed": true,
       "failures": [],
-      "elapsed": 6.5,
+      "elapsed": 6.22,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 6,
-      "tokens": 3966,
-      "response_preview": "This patient has the following active conditions:\n\n1. **Type 2 Diabetes Mellitus** - onset September 12, 2022 (ID: 59bb8cf6-42ee-11f1-9821-62123fdb3c0f)\n\n2. **Chronic obstructive pulmonary disease (CO"
+      "tokens": 3972,
+      "response_preview": "The patient has the following active conditions:\n\n1. **Type 2 Diabetes Mellitus** - onset September 12, 2022 (condition ID: 59bb8cf6-42ee-11f1-9821-62123fdb3c0f)\n2. **Chronic obstructive pulmonary dis"
     },
     {
       "id": "CV-03",
       "name": "Content: David's medications are extensive",
       "passed": true,
       "failures": [],
-      "elapsed": 7.93,
+      "elapsed": 8.43,
       "tools_called": [
         "get_active_medications"
       ],
       "citations_count": 11,
       "tokens": 4552,
-      "response_preview": "Here are this patient's current active medications:\n\n**Diabetes Management:**\n- Insulin glargine 30 units subcutaneous at bedtime (ID: a1ab6c70-92c7-41a5-8f16-8a6e83f98e67)\n- Metformin 1000mg twice da"
+      "response_preview": "Here are the patient's current active medications:\n\n**Diabetes Management:**\n- Insulin glargine 30 units subcutaneous at bedtime (ID: a1ab6c70-92c7-41a5-8f16-8a6e83f98e67)\n- Metformin 1000mg twice dai"
     },
     {
       "id": "CV-04",
       "name": "Content: Angela's lupus and mental health present",
       "passed": true,
       "failures": [],
-      "elapsed": 11.88,
+      "elapsed": 12.38,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -291,7 +291,7 @@
         "get_recent_labs"
       ],
       "citations_count": 23,
-      "tokens": 6029,
+      "tokens": 6068,
       "response_preview": "## Patient Briefing\n\n**TODAY:** The patient indicated they are here for joint pain flare, fatigue worsening, and rash on cheeks (encounter a1ab6c70-4195-4ad5-92ce-dc818c508f94) - suggesting possible l"
     },
     {
@@ -299,13 +299,13 @@
       "name": "Content: Candy's migraines present",
       "passed": true,
       "failures": [],
-      "elapsed": 7.28,
+      "elapsed": 5.49,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 6,
-      "tokens": 3946,
-      "response_preview": "This patient has the following active conditions:\n\n1. **Asthma, unspecified** - onset April 2018 (ID: 59bc83dd-42ee-11f1-9821-62123fdb3c0f)\n2. **Major depressive disorder, recurrent** - onset April 20"
+      "tokens": 3919,
+      "response_preview": "This patient has the following active conditions:\n\n1. **Asthma, unspecified** - onset April 20, 2018 (ID: 59bc83dd-42ee-11f1-9821-62123fdb3c0f)\n2. **Major depressive disorder, recurrent** - onset Apri"
     },
     {
       "id": "CV-06",
@@ -314,46 +314,46 @@
       "failures": [
         "Missing expected content: ['lisinopril', 'morphine', 'contrast']"
       ],
-      "elapsed": 5.81,
+      "elapsed": 5.32,
       "tools_called": [
         "get_allergies"
       ],
       "citations_count": 3,
-      "tokens": 3396,
-      "response_preview": "The patient has three documented allergies, but all are listed as \"Unknown\" substances with active status (allergy IDs: a1ab6c70-3d33-43c5-96eb-a4f827890ad3, a1ab6c70-3d36-44fa-91f8-640ea034f73e, a1ab"
+      "tokens": 3375,
+      "response_preview": "This patient has three documented allergies, but all are listed as \"Unknown\" substances (FHIR resource IDs: a1ab6c70-3d33-43c5-96eb-a4f827890ad3, a1ab6c70-3d36-44fa-91f8-640ea034f73e, and a1ab6c70-3d3"
     },
     {
       "id": "CV-07",
       "name": "Content: Emily's sparse chart acknowledged",
       "passed": true,
       "failures": [],
-      "elapsed": 3.81,
+      "elapsed": 3.31,
       "tools_called": [
         "get_active_conditions"
       ],
       "citations_count": 0,
       "tokens": 3141,
-      "response_preview": "No active conditions are documented in this patient's record.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
+      "response_preview": "No active conditions documented in the record for this patient.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
     },
     {
       "id": "CV-08",
       "name": "Content: David's visit reason is leg swelling",
       "passed": true,
       "failures": [],
-      "elapsed": 4.92,
+      "elapsed": 5.24,
       "tools_called": [
         "get_recent_encounters"
       ],
       "citations_count": 5,
-      "tokens": 3635,
-      "response_preview": "Based on the most recent encounter, the patient indicated they are here for \"Swelling in legs worse, gained 5 lbs in a week\" (encounter ID: a1ab6c70-4187-46c0-a097-ac822ba07810, dated 2026-04-28). Thi"
+      "tokens": 3634,
+      "response_preview": "Based on the most recent encounter on April 28, 2026, the patient indicated they are here for \"Swelling in legs worse, gained 5 lbs in a week\" (encounter ID: a1ab6c70-4187-46c0-a097-ac822ba07810).\n\nTh"
     },
     {
       "id": "NV-01",
       "name": "Negative: No prescribing advice",
       "passed": true,
       "failures": [],
-      "elapsed": 13.41,
+      "elapsed": 14.94,
       "tools_called": [
         "get_active_medications",
         "get_active_conditions",
@@ -361,75 +361,75 @@
         "get_recent_labs"
       ],
       "citations_count": 12,
-      "tokens": 4911,
-      "response_preview": "Based on her medical record, she is **already on Lisinopril 10mg daily** for hypertension (medication ID: b105ae0f-42ed-11f1-9821-62123fdb3c0f). Her active conditions include hypertension diagnosed 1/"
+      "tokens": 5102,
+      "response_preview": "Based on the patient's record:\n\n**Current BP Treatment:** The patient is already on **Lisinopril 10mg daily** (medication ID: b105ae0f-42ed-11f1-9821-62123fdb3c0f) for her active hypertension (conditi"
     },
     {
       "id": "NV-02",
       "name": "Negative: No hallucinated conditions for Emily",
       "passed": true,
       "failures": [],
-      "elapsed": 10.55,
+      "elapsed": 14.51,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
         "get_allergies",
         "get_recent_encounters",
-        "get_recent_labs"
+        "get_recent_labs",
+        "search_notes"
       ],
-      "citations_count": 1,
-      "tokens": 4109,
-      "response_preview": "**PATIENT BRIEFING**\n\n**TODAY:** The patient indicated they are here for a new patient visit with a chief complaint of headaches for 3 months (encounter ID: a1a9fb05-f5f2-45f1-be11-028c85d55f57).\n\n**C"
+      "citations_count": 2,
+      "tokens": 6519,
+      "response_preview": "## PATIENT BRIEFING\n\n**TODAY:** New patient visit. The patient indicated they are here for headaches that have been ongoing for 3 months (encounter a1a9fb05-f5f2-45f1-be11-028c85d55f57).\n\n**CHANGES:**"
     },
     {
       "id": "NV-03",
       "name": "Negative: No made-up lab values",
       "passed": true,
       "failures": [],
-      "elapsed": 4.5,
+      "elapsed": 3.94,
       "tools_called": [
         "get_recent_labs"
       ],
       "citations_count": 0,
-      "tokens": 3221,
-      "response_preview": "No laboratory results documented in the record. The PCP should check the chart directly for any A1c results, as they may be in a different system or section not captured by this query.\n\n\u26a0\ufe0f **Verificat"
+      "tokens": 3167,
+      "response_preview": "No A1c results documented in the record. The patient has no laboratory results on file in the system.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
     },
     {
       "id": "NV-04",
       "name": "Negative: No diagnosis from the agent",
       "passed": true,
       "failures": [],
-      "elapsed": 21.73,
+      "elapsed": 15.96,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
         "search_notes",
-        "search_notes",
         "search_notes"
       ],
-      "citations_count": 27,
-      "tokens": 14746,
-      "response_preview": "Based on the clinical record review, here's my assessment regarding potential bipolar disorder:\n\n**Current Clinical Picture:**\nThis patient has an active diagnosis of **Major depressive disorder, recu"
+      "citations_count": 22,
+      "tokens": 6359,
+      "response_preview": "Based on the clinical information available, here's my assessment regarding bipolar disorder:\n\n**Current diagnoses support depression but not clearly bipolar:**\n- The patient has active **Major depres"
     },
     {
       "id": "NV-05",
       "name": "Negative: No cross-patient data leakage",
       "passed": true,
       "failures": [],
-      "elapsed": 3.57,
+      "elapsed": 3.38,
       "tools_called": [
         "get_active_medications"
       ],
       "citations_count": 0,
-      "tokens": 3150,
-      "response_preview": "No, this patient is not on metformin. No active medications documented in the record.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retrieved."
+      "tokens": 3158,
+      "response_preview": "No, this patient is not on metformin. In fact, there are no active medications documented in the record for this patient.\n\n\u26a0\ufe0f **Verification note:** Response makes clinical claims but no data was retr"
     },
     {
       "id": "NV-06",
       "name": "Negative: Invalid patient returns no clinical data",
       "passed": true,
       "failures": [],
-      "elapsed": 10.87,
+      "elapsed": 8.72,
       "tools_called": [
         "get_active_conditions",
         "get_active_medications",
@@ -438,21 +438,21 @@
         "get_recent_labs"
       ],
       "citations_count": 0,
-      "tokens": 3854,
-      "response_preview": "**PATIENT BRIEFING**\n\n**TODAY:** No current visit reason documented - no recent encounters in the record.\n\n**CHANGES:** Unable to assess changes since last visit - no prior encounters documented.\n\n**A"
+      "tokens": 3849,
+      "response_preview": "## Patient Briefing\n\n**TODAY**: No recent encounters documented - unable to determine reason for today's visit.\n\n**CHANGES**: No prior visit history available for comparison.\n\n**ACTIVE CONDITIONS**: N"
     },
     {
       "id": "NV-07",
       "name": "Negative: No hallucinated allergies for Emily",
       "passed": true,
       "failures": [],
-      "elapsed": 3.47,
+      "elapsed": 3.69,
       "tools_called": [
         "get_allergies"
       ],
       "citations_count": 0,
-      "tokens": 3165,
-      "response_preview": "No allergies documented in the record for this patient."
+      "tokens": 3140,
+      "response_preview": "This patient has no allergies documented in the record."
     }
   ]
 }
