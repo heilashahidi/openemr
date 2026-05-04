@@ -1,79 +1,193 @@
-[![Syntax Status](https://github.com/openemr/openemr/actions/workflows/syntax.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/syntax.yml)
-[![Styling Status](https://github.com/openemr/openemr/actions/workflows/styling.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/styling.yml)
-[![Testing Status](https://github.com/openemr/openemr/actions/workflows/test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/test.yml)
-[![JS Unit Testing Status](https://github.com/openemr/openemr/actions/workflows/js-test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/js-test.yml)
-[![PHPStan](https://github.com/openemr/openemr/actions/workflows/phpstan.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/phpstan.yml)
-[![Rector](https://github.com/openemr/openemr/actions/workflows/rector.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/rector.yml)
-[![ShellCheck](https://github.com/openemr/openemr/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/shellcheck.yml)
-[![Docker Compose Linting](https://github.com/openemr/openemr/actions/workflows/docker-compose-lint.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/docker-compose-lint.yml)
-[![Dockerfile Linting](https://github.com/openemr/openemr/actions/workflows/hadolint.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/hadolint.yml)
-[![Isolated Tests](https://github.com/openemr/openemr/actions/workflows/isolated-tests.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/isolated-tests.yml)
-[![Inferno Certification Test](https://github.com/openemr/openemr/actions/workflows/inferno-test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/inferno-test.yml)
-[![Composer Checks](https://github.com/openemr/openemr/actions/workflows/composer.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/composer.yml)
-[![Composer Require Checker](https://github.com/openemr/openemr/actions/workflows/composer-require-checker.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/composer-require-checker.yml)
-[![API Docs Freshness Checks](https://github.com/openemr/openemr/actions/workflows/api-docs.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/api-docs.yml)
-[![codecov](https://codecov.io/gh/openemr/openemr/graph/badge.svg?token=7Eu3U1Ozdq)](https://codecov.io/gh/openemr/openemr)
+# Clinical Co-Pilot — OpenEMR AI Agent
 
-[![Backers on Open Collective](https://opencollective.com/openemr/backers/badge.svg)](#backers) [![Sponsors on Open Collective](https://opencollective.com/openemr/sponsors/badge.svg)](#sponsors)
+> An AI-powered clinical co-pilot embedded in OpenEMR that gives primary care physicians pre-room briefings, answers follow-up questions, and searches clinical notes — every claim cited to a FHIR record.
 
-# OpenEMR
+**Deployed URLs:**
+- OpenEMR: `https://backlog-troubling-unfold.ngrok-free.dev`
+- Agent: `https://agent-copilot.ngrok-free.dev`
+- Login: `admin` / `pass`
 
-[OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
+---
 
-### Contributing
+## Quick Start
 
-OpenEMR is a leader in healthcare open source software and comprises a large and diverse community of software developers, medical providers and educators with a very healthy mix of both volunteers and professionals. [Join us and learn how to start contributing today!](https://open-emr.org/wiki/index.php/FAQ#How_do_I_begin_to_volunteer_for_the_OpenEMR_project.3F)
+### Prerequisites
+- Docker + Docker Compose
+- Python 3.9+
+- ngrok (hobby plan for two tunnels)
+- Anthropic API key
+- LangSmith API key
 
-> Already comfortable with git? Check out [CONTRIBUTING.md](CONTRIBUTING.md) for quick setup instructions and requirements for contributing to OpenEMR by resolving a bug or adding an awesome feature 😊.
-
-### Support
-
-Community and Professional support can be found [here](https://open-emr.org/wiki/index.php/OpenEMR_Support_Guide).
-
-Extensive documentation and forums can be found on the [OpenEMR website](https://open-emr.org) that can help you to become more familiar about the project 📖.
-
-### Reporting Issues and Bugs
-
-Report these on the [Issue Tracker](https://github.com/openemr/openemr/issues). If you are unsure if it is an issue/bug, then always feel free to use the [Forum](https://community.open-emr.org/) and [Chat](https://www.open-emr.org/chat/) to discuss about the issue 🪲.
-
-### Reporting Security Vulnerabilities
-
-Check out [SECURITY.md](.github/SECURITY.md)
-
-### API
-
-Check out [API_README.md](API_README.md)
-
-### Docker
-
-Check out [DOCKER_README.md](DOCKER_README.md)
-
-### FHIR
-
-Check out [FHIR_README.md](FHIR_README.md)
-
-### For Developers
-
-If using OpenEMR directly from the code repository, then the following commands will build OpenEMR (Node.js version 24.* is required) :
-
-```shell
-composer install --no-dev
-npm install
-npm run build
-composer dump-autoload -o
+### 1. Start OpenEMR
+```bash
+cd docker/development-easy
+docker-compose up -d
+# Wait 60 seconds for initialization
+curl -ks https://localhost:9300/interface/login/login.php | head -3
 ```
 
-### Contributors
+### 2. Start the Agent
+```bash
+cd agent
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your API keys
+source .env && export OPENEMR_BASE OPENEMR_CLIENT_ID OPENEMR_CLIENT_SECRET ANTHROPIC_API_KEY
+export LANGCHAIN_TRACING_V2=true
+export LANGCHAIN_API_KEY=your-langsmith-key
+export LANGCHAIN_PROJECT=clinical-copilot
+python3 -m uvicorn app:app --port 8000
+```
 
-This project exists thanks to all the people who have contributed. [[Contribute]](CONTRIBUTING.md).
-<a href="https://github.com/openemr/openemr/graphs/contributors"><img src="https://opencollective.com/openemr/contributors.svg?width=890" /></a>
+### 3. Expose via ngrok
+```bash
+# Terminal 2
+ngrok http https://localhost:9300 --url backlog-troubling-unfold.ngrok-free.dev
 
+# Terminal 3
+ngrok http 8000 --url agent-copilot.ngrok-free.dev
+```
 
-### Sponsors
+### 4. Open in browser
+- Go to `https://backlog-troubling-unfold.ngrok-free.dev`
+- Log in → open any patient → click the red ⚕️ button
 
-Thanks to our [ONC Certification Major Sponsors](https://www.open-emr.org/wiki/index.php/OpenEMR_Certification_Stage_III_Meaningful_Use#Major_sponsors)!
+---
 
+## Week 1 — Baseline Agent
 
-### License
+The Week 1 agent provides a conversational AI co-pilot for PCPs with structured FHIR tools and RAG.
 
-[GNU GPL](LICENSE)
+### Capabilities
+- **Pre-room briefing** — auto-generated when a patient is selected (UC1)
+- **Factual lookup** — "What medications is this patient on?" (UC2)
+- **Mid-visit pivot** — "Has she ever mentioned chest pain?" (UC3)
+- **Post-visit recap** — "Summarize the last three visits" (UC4)
+- **Clinical history search** — RAG semantic search via ChromaDB (UC5)
+- **Cross-domain reasoning** — "What in their history might explain leg swelling?" (UC6)
+- **New patient handling** — honest silence on empty charts (UC7)
+- **Safety guardrails** — declines to prescribe or diagnose (UC8)
+
+### Architecture
+Sidecar pattern: Python FastAPI agent alongside OpenEMR, connected via FHIR R4 API + OAuth2.
+
+### 7 Tools
+| Tool | Type | What it does |
+|---|---|---|
+| `get_patient_summary` | FHIR | Demographics |
+| `get_active_conditions` | FHIR | Problem list |
+| `get_active_medications` | FHIR | Current meds |
+| `get_allergies` | FHIR | Allergy list |
+| `get_recent_encounters` | FHIR | Visit history |
+| `get_recent_labs` | FHIR | Lab results |
+| `search_notes` | RAG | Semantic note search (ChromaDB) |
+
+### Eval Results (Week 1)
+- Core suite: 29/30 (96.7%) — tool selection, citation, content, negative validation
+- RAG suite: 18/18 (100%) — RAG-only, hybrid, silence handling
+- **Combined: 47/48 (97.9%)**
+
+### Key Files
+| File | Purpose |
+|---|---|
+| `agent/app.py` | FastAPI service, /chat endpoint |
+| `agent/tools.py` | 7 FHIR + RAG tools |
+| `agent/rag.py` | ChromaDB RAG module |
+| `agent/verification.py` | Citation + hallucination checks |
+| `agent/chat.html` | Chat UI with auto-briefing |
+| `agent/eval_suite.py` | 30-test core eval suite |
+| `agent/test_rag.py` | 18-test RAG eval suite |
+| `AUDIT.md` | OpenEMR integration audit |
+| `ARCHITECTURE.md` | System architecture |
+| `USERS.md` | Target user + 8 use cases |
+| `EVAL_RESULTS.md` | Formatted eval results + cost analysis |
+
+---
+
+## Week 2 — Multimodal Evidence Agent
+
+Week 2 extends the agent with document ingestion, multi-agent routing, and eval-driven CI.
+
+### New Capabilities
+- **Document ingestion** — upload lab PDFs and intake forms, extract structured data with VLM
+- **Multi-agent graph** — supervisor routes to intake-extractor and evidence-retriever workers
+- **Hybrid RAG + rerank** — clinical guideline corpus with keyword + dense retrieval
+- **Eval-driven CI gate** — 50-case golden set with boolean rubrics, blocks regressions
+
+### Running Week 2 Flow
+
+```bash
+# Same setup as above, plus:
+pip install langgraph reportlab
+
+# Generate sample documents
+python3 agent/create_sample_docs.py
+
+# Run the Week 2 agent (same command — Week 2 tools are added to the existing agent)
+cd agent
+python3 -m uvicorn app:app --port 8000
+
+# Test document extraction
+curl -s -X POST http://localhost:8000/extract \
+  -F "file=@sample_docs/sample_lab_report.pdf" \
+  -F "patient_id=fbaa4958-437f-11f1-9821-62123fdb3c0f" \
+  -F "doc_type=lab_pdf" | python3 -m json.tool
+
+# Run Week 2 evals
+python3 eval_w2.py
+```
+
+### Week 2 Environment Variables
+Same as Week 1. No additional environment variables required.
+
+### Week 2 Key Files
+| File | Purpose |
+|---|---|
+| `agent/document_extractor.py` | VLM-based PDF/image extraction |
+| `agent/schemas.py` | Pydantic schemas for lab_pdf + intake_form |
+| `agent/supervisor.py` | Multi-agent supervisor + worker graph |
+| `agent/evidence_retriever.py` | Guideline RAG with reranking |
+| `agent/create_sample_docs.py` | Sample document generator |
+| `agent/eval_w2.py` | 50-case Week 2 eval suite |
+| `W2_ARCHITECTURE.md` | Week 2 architecture document |
+| `sample_docs/` | Sample lab PDFs and intake forms |
+
+### Week 2 Schemas
+**Lab PDF** (`LabPDFExtraction`): test_name, value, unit, reference_range, collection_date, abnormal_flag, source_citation
+
+**Intake Form** (`IntakeFormExtraction`): demographics, chief_concern, current_medications, allergies, family_history, social_history, review_of_systems, source_citation
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [AUDIT.md](AUDIT.md) | OpenEMR security, performance, architecture, data quality, compliance audit |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Week 1 system architecture with RAG, verification, observability |
+| [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) | Week 2 multimodal architecture — ingestion, workers, eval gate |
+| [USERS.md](USERS.md) | Target user (PCP), 8 use cases, traceability table |
+| [EVAL_RESULTS.md](EVAL_RESULTS.md) | Eval results with cost projections |
+
+---
+
+## Deployment
+
+### Demo (Current)
+- OpenEMR: Docker Compose (`docker/development-easy/`) → ngrok tunnel
+- Agent: Python/uvicorn → ngrok tunnel
+- 4 terminals required: Docker, agent, ngrok×2
+
+### Production Path
+See [ARCHITECTURE.md §12](ARCHITECTURE.md) for full production deployment plan including containerization, pgvector, self-hosted Langfuse, and scaling to 300 concurrent clinicians.
+
+---
+
+## Cost
+
+| Scale | Queries/day | Daily cost |
+|---|---|---|
+| 1 PCP | 60 | $0.84 |
+| 10 PCPs | 600 | $8.40 |
+| 100 PCPs | 6,000 | $84.00 |
+| Hospital (300 PCPs) | 18,000 | $252.00 |
