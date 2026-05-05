@@ -10,12 +10,43 @@ Takes an intake form extraction and creates:
 Run: python3 ingest_to_openemr.py
 """
 
+import hashlib
 import json
 import subprocess
 import os
+import uuid as uuidlib
 from document_extractor import extract_document
 
 MARIADB_CMD = "docker exec -i $(docker ps | grep maria | awk '{print $1}') mariadb -u root -proot openemr"
+OEMR_DOC_REPO = "/var/www/localhost/htdocs/openemr/sites/default/documents"
+
+
+def find_openemr_container():
+    """Container ID for the OpenEMR webserver (image openemr/openemr)."""
+    out = subprocess.run(
+        "docker ps --format '{{.ID}} {{.Image}}' | grep openemr/openemr",
+        shell=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return out.split()[0] if out else None
+
+
+def find_existing_document(filename):
+    """Return (doc_id, foreign_id_pid) if a document with this name already exists, else None.
+
+    Used as the idempotency key — a sample file uniquely identifies a patient
+    (intake) or a lab batch.
+    """
+    safe = escape_sql(filename)
+    result = run_sql(f"SELECT id, foreign_id FROM documents WHERE name='{safe}' AND deleted=0 LIMIT 1;")
+    if not result:
+        return None
+    lines = result.strip().split('\n')
+    if len(lines) < 2:
+        return None
+    parts = lines[1].split('\t')
+    if len(parts) < 2 or not parts[0].strip().isdigit():
+        return None
+    return int(parts[0]), int(parts[1])
 
 
 def run_sql(sql):
@@ -96,8 +127,72 @@ def escape_sql(val):
     return str(val).replace("'", "\\'").replace('"', '\\"')
 
 
-def ingest_intake_form(extraction, source_file):
+def next_encounter_number():
+    """Get next global encounter number (form_encounter.encounter)."""
+    result = run_sql("SELECT COALESCE(MAX(encounter), 0)+1 FROM form_encounter;")
+    if result:
+        lines = result.strip().split('\n')
+        if len(lines) > 1 and lines[1].strip().isdigit():
+            return int(lines[1].strip())
+    return 1
+
+
+def store_document(pid, source_path, doc_date, category_id):
+    """Copy a file into OpenEMR's document storage and register it in the DB.
+
+    Storage convention (see library/classes/Document.class.php):
+      <repo>/<pid>/<uuid>   with path_depth=1, url="file://<abs path>".
+
+    drive_encryption is globally on in this dev install, so we set the
+    per-document `encrypted` flag to 0 — the file is stored as-is and OpenEMR
+    skips the decrypt step on read.
+    """
+    filename = os.path.basename(source_path)
+    mimetype = "image/png" if filename.endswith(".png") else "application/pdf"
+
+    oemr_cid = find_openemr_container()
+    if not oemr_cid:
+        print("  ⚠️  OpenEMR container not found; storing DB row only")
+        oemr_cid = None
+
+    file_uuid = str(uuidlib.uuid4())
+    dst_dir = f"{OEMR_DOC_REPO}/{pid}"
+    dst_path = f"{dst_dir}/{file_uuid}"
+    url = f"file://{dst_path}"
+
+    size = 0
+    sha1 = ""
+    if oemr_cid and os.path.exists(source_path):
+        with open(source_path, "rb") as fh:
+            data = fh.read()
+        size = len(data)
+        sha1 = hashlib.sha1(data).hexdigest()
+        subprocess.run(["docker", "exec", oemr_cid, "mkdir", "-p", dst_dir], check=True)
+        subprocess.run(["docker", "cp", source_path, f"{oemr_cid}:{dst_path}"], check=True)
+        subprocess.run(["docker", "exec", oemr_cid, "chown", "-R", "apache:apache", dst_dir], check=True)
+        subprocess.run(["docker", "exec", oemr_cid, "chmod", "0700", dst_dir], check=True)
+        subprocess.run(["docker", "exec", oemr_cid, "chmod", "0600", dst_path], check=True)
+
+    doc_id = run_sql_insert(
+        f"INSERT INTO documents (uuid, type, size, date, url, mimetype, owner, revision, foreign_id, docdate, name, storagemethod, path_depth, drive_uuid, encrypted, hash) "
+        f"VALUES (UNHEX(REPLACE(UUID(),'-','')), 'file_url', {size}, NOW(), '{escape_sql(url)}', '{mimetype}', 1, NOW(), {pid}, '{doc_date}', '{escape_sql(filename)}', 0, 1, "
+        f"UNHEX(REPLACE('{file_uuid}','-','')), 0, '{sha1}');"
+    )
+    if doc_id:
+        run_sql(f"INSERT INTO categories_to_documents (category_id, document_id) VALUES ({category_id}, {doc_id});")
+    return doc_id
+
+
+def ingest_intake_form(extraction, source_path):
     """Create a patient and populate their chart from an intake form extraction."""
+    source_file = os.path.basename(source_path)
+
+    existing = find_existing_document(source_file)
+    if existing:
+        existing_pid = existing[1]
+        print(f"  ⏭️  Skipping {source_file}: already ingested for pid={existing_pid}")
+        return existing_pid
+
     data = extraction
     pid = get_next_pid()
 
@@ -168,14 +263,21 @@ def ingest_intake_form(extraction, source_file):
     # 5. Add encounter with chief concern
     chief_concern = escape_sql(data.get('chief_concern', 'New patient visit'))
     form_date = data.get('form_date', '2026-04-20')
-    sql = f"INSERT INTO form_encounter (pid, date, reason, facility_id, provider_id) VALUES ({pid}, '{form_date}', '{chief_concern}', 3, 1);"
-    run_sql(sql)
-    print(f"  ✅ Encounter added: {data.get('chief_concern', '')[:60]}")
+    encounter_num = next_encounter_number()
+    fe_id = run_sql_insert(
+        f"INSERT INTO form_encounter (pid, encounter, date, reason, facility_id, provider_id) "
+        f"VALUES ({pid}, {encounter_num}, '{form_date}', '{chief_concern}', 3, 1);"
+    )
+    # Register the encounter in the forms table so it appears in the chart's
+    # encounter list (the UI joins forms → form_encounter via form_id).
+    run_sql(
+        f"INSERT INTO forms (date, encounter, form_name, form_id, pid, formdir, provider_id, deleted) "
+        f"VALUES ('{form_date}', {encounter_num}, 'New Patient Encounter', {fe_id}, {pid}, 'newpatient', 1, 0);"
+    )
+    print(f"  ✅ Encounter #{encounter_num} added: {data.get('chief_concern', '')[:60]}")
 
-    # 6. Store document reference in OpenEMR
-    mimetype = "image/png" if source_file.endswith(".png") else "application/pdf"
-    sql = f"INSERT INTO documents (id, uuid, type, size, date, mimetype, owner, revision, foreign_id, docdate, name, storagemethod) SELECT COALESCE(MAX(id),0)+1, UNHEX(REPLACE(UUID(),'-','')), 'file_url', 0, NOW(), '{mimetype}', 1, NOW(), {pid}, '{form_date}', '{escape_sql(source_file)}', 0 FROM documents;"
-    run_sql(sql)
+    # 6. Store document reference in OpenEMR (Patient Information category)
+    store_document(pid, source_path, form_date, category_id=4)
     print(f"  ✅ Source document reference stored in OpenEMR")
 
     # 7. Add family history as notes
@@ -189,8 +291,14 @@ def ingest_intake_form(extraction, source_file):
     return pid
 
 
-def ingest_lab_results(extraction, patient_pid, source_file):
+def ingest_lab_results(extraction, patient_pid, source_path):
     """Add lab results to an existing patient's chart via procedure tables."""
+    source_file = os.path.basename(source_path)
+
+    if find_existing_document(source_file):
+        print(f"  ⏭️  Skipping {source_file}: lab already ingested for pid={patient_pid}")
+        return
+
     data = extraction
     labs = data.get('lab_results', [])
     collection_date = data.get('collection_date', '2026-04-20')
@@ -234,10 +342,8 @@ def ingest_lab_results(extraction, patient_pid, source_file):
 
     print(f"  ✅ {len(labs)} lab results stored in procedure tables (order={order_id}, report={report_id})")
 
-    # Store document reference
-    mimetype = "image/png" if source_file.endswith(".png") else "application/pdf"
-    sql = f"INSERT INTO documents (id, uuid, type, size, date, mimetype, owner, revision, foreign_id, docdate, name, storagemethod) SELECT COALESCE(MAX(id),0)+1, UNHEX(REPLACE(UUID(),'-','')), 'file_url', 0, NOW(), '{mimetype}', 1, NOW(), {patient_pid}, '{collection_date}', '{escape_sql(source_file)}', 0 FROM documents;"
-    run_sql(sql)
+    # Store document reference (Lab Report category)
+    store_document(patient_pid, source_path, collection_date, category_id=2)
     print(f"  ✅ Lab document reference stored for pid={patient_pid}")
 
 
@@ -260,15 +366,20 @@ def main():
 
     for filename in intake_files:
         filepath = os.path.join(intake_dir, filename)
+        prefix = '-'.join(filename.split('-')[0:2])  # e.g., 'p01-chen'
+
+        existing = find_existing_document(filename)
+        if existing:
+            print(f"\n  ⏭️  Skipping {filename}: already ingested for pid={existing[1]}")
+            created_patients[prefix] = existing[1]
+            continue
+
         print(f"\n  Extracting: {filename}...")
         result = extract_document(filepath, "intake_form")
 
         if result.get("success"):
-            pid = ingest_intake_form(result["extraction"], filename)
-            # Map patient name prefix to pid for lab linking
-            prefix = filename.split('-')[0:2]  # e.g., ['p01', 'chen']
-            key = '-'.join(prefix)
-            created_patients[key] = pid
+            pid = ingest_intake_form(result["extraction"], filepath)
+            created_patients[prefix] = pid
         else:
             print(f"  ❌ Extraction failed: {result.get('error', 'Unknown error')}")
 
@@ -285,11 +396,15 @@ def main():
             print(f"\n  ⚠️  No patient found for {filename}, skipping")
             continue
 
+        if find_existing_document(filename):
+            print(f"\n  ⏭️  Skipping {filename}: lab already ingested for pid={patient_pid}")
+            continue
+
         print(f"\n  Extracting: {filename}...")
         result = extract_document(filepath, "lab_pdf")
 
         if result.get("success"):
-            ingest_lab_results(result["extraction"], patient_pid, filename)
+            ingest_lab_results(result["extraction"], patient_pid, filepath)
         else:
             print(f"  ❌ Extraction failed: {result.get('error', 'Unknown error')}")
 
