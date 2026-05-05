@@ -31,6 +31,29 @@ def find_openemr_container():
     return out.split()[0] if out else None
 
 
+def add_citation(target_table, target_id, document_id, citation=None, field=None):
+    """Persist a link from a derived fact (DB row) back to its source document.
+
+    citation: optional dict from the extractor with keys page_or_section,
+              field_or_chunk_id, quote_or_value. May be None when the fact
+              came from a list[str] field with no per-item citation — we
+              still record document_id + field so the trace exists.
+    field:    fallback field_or_chunk_id when no citation dict is provided.
+    """
+    if not document_id or not target_id:
+        return
+    c = citation or {}
+    page = escape_sql(c.get('page_or_section') or '')
+    fld = escape_sql(c.get('field_or_chunk_id') or field or '')
+    quote = escape_sql(c.get('quote_or_value') or '')
+    run_sql(
+        f"INSERT INTO derived_fact_citations (target_table, target_id, document_id, "
+        f"page_or_section, field_or_chunk_id, quote_or_value) "
+        f"VALUES ('{escape_sql(target_table)}', {target_id}, {document_id}, "
+        f"'{page}', '{fld}', '{quote}');"
+    )
+
+
 def find_existing_document(filename):
     """Return (doc_id, foreign_id_pid) if a document with this name already exists, else None.
 
@@ -171,7 +194,7 @@ RELATION_TO_COLUMN = {
 }
 
 
-def populate_family_history(pid, family_history):
+def populate_family_history(pid, family_history, document_id=None):
     """Map extracted family_history entries to OpenEMR's history_data columns.
 
     OpenEMR stores family history per-relation in `history_data` as free text
@@ -213,14 +236,25 @@ def populate_family_history(pid, family_history):
     )
     if has_row:
         run_sql(f"UPDATE history_data SET {set_clauses} WHERE pid={pid};")
+        row_id_out = run_sql(f"SELECT id FROM history_data WHERE pid={pid} LIMIT 1;")
+        hist_id = int(row_id_out.strip().split('\n')[1]) if row_id_out and len(row_id_out.strip().split('\n')) > 1 else None
     else:
         cols = ", ".join(fields.keys())
         vals = ", ".join(f"'{escape_sql(' / '.join(v))}'" for v in fields.values())
-        run_sql(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+        hist_id = run_sql_insert(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+
+    # One citation per family entry, tagged with the column it landed in.
+    if hist_id and document_id:
+        for entry in family_history:
+            relation_raw = (entry.get('relation') or '').strip().lower()
+            col = RELATION_TO_COLUMN.get(relation_raw, 'additional_history')
+            add_citation('history_data', hist_id, document_id,
+                         citation=entry.get('source_citation'),
+                         field=col)
     print(f"  ✅ Family history populated ({len(family_history)} entries → {len(fields)} columns)")
 
 
-def populate_emergency_contact(pid, ec_text):
+def populate_emergency_contact(pid, ec_text, document_id=None):
     """Parse 'Name (Relationship) - Phone' and write to patient_data.
 
     OpenEMR has phone_contact + contact_relationship; no dedicated name field,
@@ -237,10 +271,12 @@ def populate_emergency_contact(pid, ec_text):
         f"UPDATE patient_data SET phone_contact='{escape_sql(phone)}', "
         f"contact_relationship='{escape_sql(name_rel)}' WHERE pid={pid};"
     )
+    add_citation('patient_data', pid, document_id,
+                 citation={'field_or_chunk_id': 'emergency_contact', 'quote_or_value': ec_text})
     print(f"  ✅ Emergency contact: {name_rel} / {phone}")
 
 
-def populate_insurance(pid, ins_text):
+def populate_insurance(pid, ins_text, document_id=None):
     """Insert a single primary insurance_data row from the free-text extraction.
 
     Pattern handled: '<Provider/Plan> - Member ID: <policy>' (case-insensitive
@@ -263,14 +299,16 @@ def populate_insurance(pid, ins_text):
     run_sql(
         f"DELETE FROM insurance_data WHERE pid={pid} AND type='primary';"
     )
-    run_sql(
+    ins_id = run_sql_insert(
         f"INSERT INTO insurance_data (pid, type, provider, policy_number, date) "
         f"VALUES ({pid}, 'primary', '{escape_sql(provider)}', '{escape_sql(policy)}', CURDATE());"
     )
+    add_citation('insurance_data', ins_id, document_id,
+                 citation={'field_or_chunk_id': 'insurance', 'quote_or_value': ins_text})
     print(f"  ✅ Insurance: {provider} / policy={policy}")
 
 
-def populate_problem_list(pid, conditions, form_date):
+def populate_problem_list(pid, conditions, form_date, document_id=None):
     """Insert each condition as a lists row (type='medical_problem')."""
     if not conditions:
         return
@@ -278,20 +316,21 @@ def populate_problem_list(pid, conditions, form_date):
         cond = str(cond).strip()
         if not cond:
             continue
-        # Skip if already present (avoid duplicates on re-runs)
         existing = run_sql(
             f"SELECT id FROM lists WHERE pid={pid} AND type='medical_problem' AND title='{escape_sql(cond)}' LIMIT 1;"
         )
         if existing and len(existing.strip().split('\n')) > 1:
             continue
-        run_sql(
+        new_id = run_sql_insert(
             f"INSERT INTO lists (pid, type, title, begdate, activity) "
             f"VALUES ({pid}, 'medical_problem', '{escape_sql(cond)}', '{form_date}', 1);"
         )
+        add_citation('lists', new_id, document_id,
+                     citation={'field_or_chunk_id': 'past_medical_history', 'quote_or_value': cond})
     print(f"  ✅ Past medical history: {len(conditions)} entries")
 
 
-def populate_surgical_history(pid, surgeries, form_date):
+def populate_surgical_history(pid, surgeries, form_date, document_id=None):
     """Insert each surgery as a lists row (type='surgery')."""
     if not surgeries:
         return
@@ -304,24 +343,28 @@ def populate_surgical_history(pid, surgeries, form_date):
         )
         if existing and len(existing.strip().split('\n')) > 1:
             continue
-        run_sql(
+        new_id = run_sql_insert(
             f"INSERT INTO lists (pid, type, title, begdate, activity) "
             f"VALUES ({pid}, 'surgery', '{escape_sql(surg)}', '{form_date}', 1);"
         )
+        add_citation('lists', new_id, document_id,
+                     citation={'field_or_chunk_id': 'surgical_history', 'quote_or_value': surg})
     print(f"  ✅ Surgical history: {len(surgeries)} entries")
 
 
-def populate_treating_physicians(pid, physicians_text):
+def populate_treating_physicians(pid, physicians_text, document_id=None):
     """Save treating physicians free-text into patient_data.care_team_provider."""
     if not physicians_text:
         return
     run_sql(
         f"UPDATE patient_data SET care_team_provider='{escape_sql(physicians_text)}' WHERE pid={pid};"
     )
+    add_citation('patient_data', pid, document_id,
+                 citation={'field_or_chunk_id': 'treating_physicians', 'quote_or_value': physicians_text})
     print(f"  ✅ Treating physicians: {physicians_text[:80]}")
 
 
-def populate_social_history(pid, social_history_text):
+def populate_social_history(pid, social_history_text, document_id=None):
     """Save the extracted social history blob into history_data.
 
     The intake extraction returns social_history as free text. We also try to
@@ -361,10 +404,14 @@ def populate_social_history(pid, social_history_text):
     set_clauses = ", ".join(f"{c}='{escape_sql(v)}'" for c, v in fields.items())
     if has_row:
         run_sql(f"UPDATE history_data SET {set_clauses} WHERE pid={pid};")
+        hist_id = int(existing.strip().split('\n')[1])
     else:
         cols = ", ".join(fields.keys())
         vals = ", ".join(f"'{escape_sql(v)}'" for v in fields.values())
-        run_sql(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+        hist_id = run_sql_insert(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+    if hist_id and document_id:
+        add_citation('history_data', hist_id, document_id,
+                     citation={'field_or_chunk_id': 'social_history', 'quote_or_value': blob[:500]})
     print(f"  ✅ Social history populated ({len(fields)-1} structured fields + additional_history)")
 
 
@@ -478,65 +525,70 @@ def ingest_intake_form(extraction, source_path):
     # Generate UUID
     run_sql(f"UPDATE patient_data SET uuid = UNHEX(REPLACE(UUID(), '-', '')) WHERE pid = {pid} AND uuid IS NULL;")
 
-    # 2. Add conditions from problem list (if available in extraction)
-    # Intake forms may have conditions in various fields
-    conditions_added = 0
+    form_date = data.get('form_date', '2026-04-20')
 
-    # 3. Add medications
+    # 2. Store source document FIRST so derived facts can cite it.
+    document_id = store_document(pid, source_path, form_date, category_id=4)
+    print(f"  ✅ Source document reference stored in OpenEMR (doc_id={document_id})")
+
+    # 3. Medications
     meds = data.get('current_medications', [])
     for med in meds:
         med_name = escape_sql(med.get('medication_name', ''))
         dose = escape_sql(med.get('dose', ''))
         freq = escape_sql(med.get('frequency', ''))
-        purpose = escape_sql(med.get('purpose', ''))
         full_drug = f"{med_name} {dose}".strip()
-
-        sql = f"INSERT INTO prescriptions (patient_id, drug, dosage, date_added, active, txDate, usage_category_title, request_intent_title) VALUES ({pid}, '{escape_sql(full_drug)}', '{escape_sql(freq)}', NOW(), 1, CURDATE(), '', '');"
-        run_sql(sql)
-        conditions_added += 1
+        rx_id = run_sql_insert(
+            f"INSERT INTO prescriptions (patient_id, drug, dosage, date_added, active, txDate, "
+            f"usage_category_title, request_intent_title) "
+            f"VALUES ({pid}, '{escape_sql(full_drug)}', '{escape_sql(freq)}', NOW(), 1, CURDATE(), '', '');"
+        )
+        add_citation('prescriptions', rx_id, document_id,
+                     citation=med.get('source_citation'),
+                     field='current_medications')
     print(f"  ✅ {len(meds)} medications added")
 
-    # 4. Add allergies
+    # 4. Allergies
     allergies = data.get('allergies', [])
     for allergy in allergies:
         allergen = escape_sql(allergy.get('allergen', ''))
         reaction = escape_sql(allergy.get('reaction', ''))
-        sql = f"INSERT INTO lists (pid, type, title, diagnosis, begdate, activity) VALUES ({pid}, 'allergy', '{allergen} ({reaction})', '', CURDATE(), 1);"
-        run_sql(sql)
+        al_id = run_sql_insert(
+            f"INSERT INTO lists (pid, type, title, diagnosis, begdate, activity) "
+            f"VALUES ({pid}, 'allergy', '{allergen} ({reaction})', '', CURDATE(), 1);"
+        )
+        add_citation('lists', al_id, document_id,
+                     citation=allergy.get('source_citation'),
+                     field='allergies')
     print(f"  ✅ {len(allergies)} allergies added")
 
-    # 5. Add encounter with chief concern
+    # 5. Encounter with chief concern
     chief_concern = escape_sql(data.get('chief_concern', 'New patient visit'))
-    form_date = data.get('form_date', '2026-04-20')
     encounter_num = next_encounter_number()
     fe_id = run_sql_insert(
         f"INSERT INTO form_encounter (pid, encounter, date, reason, facility_id, provider_id) "
         f"VALUES ({pid}, {encounter_num}, '{form_date}', '{chief_concern}', 3, 1);"
     )
-    # Register the encounter in the forms table so it appears in the chart's
-    # encounter list (the UI joins forms → form_encounter via form_id).
     run_sql(
         f"INSERT INTO forms (date, encounter, form_name, form_id, pid, formdir, provider_id, deleted) "
         f"VALUES ('{form_date}', {encounter_num}, 'New Patient Encounter', {fe_id}, {pid}, 'newpatient', 1, 0);"
     )
+    add_citation('form_encounter', fe_id, document_id,
+                 citation={'field_or_chunk_id': 'chief_concern', 'quote_or_value': data.get('chief_concern', '')})
     print(f"  ✅ Encounter #{encounter_num} added: {data.get('chief_concern', '')[:60]}")
 
-    # 6. Store document reference in OpenEMR (Patient Information category)
-    store_document(pid, source_path, form_date, category_id=4)
-    print(f"  ✅ Source document reference stored in OpenEMR")
+    # 6. Family + social history
+    populate_family_history(pid, data.get('family_history', []), document_id=document_id)
+    populate_social_history(pid, data.get('social_history'), document_id=document_id)
 
-    # 7. Family + social history → history_data
-    populate_family_history(pid, data.get('family_history', []))
-    populate_social_history(pid, data.get('social_history'))
+    # 7. Past medical + surgical history
+    populate_problem_list(pid, data.get('past_medical_history', []), form_date, document_id=document_id)
+    populate_surgical_history(pid, data.get('surgical_history', []), form_date, document_id=document_id)
 
-    # 8. Past medical + surgical history → lists
-    populate_problem_list(pid, data.get('past_medical_history', []), form_date)
-    populate_surgical_history(pid, data.get('surgical_history', []), form_date)
-
-    # 9. Emergency contact, insurance, treating physicians → patient_data / insurance_data
-    populate_emergency_contact(pid, data.get('emergency_contact'))
-    populate_insurance(pid, data.get('insurance'))
-    populate_treating_physicians(pid, data.get('treating_physicians'))
+    # 8. Emergency contact, insurance, treating physicians
+    populate_emergency_contact(pid, data.get('emergency_contact'), document_id=document_id)
+    populate_insurance(pid, data.get('insurance'), document_id=document_id)
+    populate_treating_physicians(pid, data.get('treating_physicians'), document_id=document_id)
 
     print(f"\n  ✅ Patient {fname} {lname} fully ingested into OpenEMR (pid={pid})")
     return pid
@@ -564,7 +616,11 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         if len(lines) > 1 and lines[1].strip().isdigit():
             encounter_id = int(lines[1].strip())
 
-    # 1. Create procedure_order with specimen info
+    # 1. Store source document FIRST so derived facts can cite it.
+    document_id = store_document(patient_pid, source_path, collection_date, category_id=2)
+    print(f"  ✅ Lab document reference stored for pid={patient_pid} (doc_id={document_id})")
+
+    # 2. Create procedure_order with specimen info
     spec_type = escape_sql(data.get('specimen_type') or '')
     spec_vol = escape_sql(data.get('specimen_volume') or '')
     order_id = run_sql_insert(
@@ -573,12 +629,13 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         f"VALUES (UNHEX(REPLACE(UUID(),'-','')), 1, {patient_pid}, {encounter_id}, '{collection_date}', '{collection_date}', "
         f"'normal', 'complete', 1, '{spec_type}', '{spec_vol}');"
     )
-
     if not order_id:
         print(f"  ❌ Failed to create procedure_order")
         return
+    add_citation('procedure_order', order_id, document_id,
+                 citation={'field_or_chunk_id': 'specimen', 'quote_or_value': f"{data.get('specimen_type','')} / {data.get('specimen_volume','')}"})
 
-    # 2. Create procedure_report. Prepend specimen_notes (if any) so they show
+    # 3. Create procedure_report. Prepend specimen_notes (if any) so they show
     # alongside the interpretation in the chart's report-notes panel.
     spec_notes = (data.get('specimen_notes') or '').strip()
     interp_text = (data.get('interpretive_comments') or '').strip()
@@ -591,12 +648,14 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         f"INSERT INTO procedure_report (uuid, procedure_order_id, procedure_order_seq, date_collected, date_report, report_status, review_status, report_notes) "
         f"VALUES (UNHEX(REPLACE(UUID(),'-','')), {order_id}, 1, '{collection_date}', '{collection_date}', 'final', 'received', '{interp}');"
     )
-
     if not report_id:
         print(f"  ❌ Failed to create procedure_report")
         return
+    if combined:
+        add_citation('procedure_report', report_id, document_id,
+                     citation={'field_or_chunk_id': 'interpretive_comments', 'quote_or_value': combined[:500]})
 
-    # 3. Insert each lab result
+    # 4. Insert each lab result
     for lab in labs:
         test_name = escape_sql(lab.get('test_name', ''))
         value = escape_sql(lab.get('value', ''))
@@ -604,16 +663,20 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         ref_range = escape_sql(lab.get('reference_range', ''))
         flag = escape_sql(lab.get('abnormal_flag', '') or '')
 
-        run_sql(f"INSERT INTO procedure_result (uuid, procedure_report_id, result_data_type, result_code, result_text, date, units, result, `range`, abnormal, result_status) VALUES (UNHEX(REPLACE(UUID(),'-','')), {report_id}, 'S', '', '{test_name}', '{collection_date}', '{unit}', '{value}', '{ref_range}', '{flag}', 'final');")
+        result_id = run_sql_insert(
+            f"INSERT INTO procedure_result (uuid, procedure_report_id, result_data_type, result_code, result_text, "
+            f"date, units, result, `range`, abnormal, result_status) "
+            f"VALUES (UNHEX(REPLACE(UUID(),'-','')), {report_id}, 'S', '', '{test_name}', '{collection_date}', "
+            f"'{unit}', '{value}', '{ref_range}', '{flag}', 'final');"
+        )
+        add_citation('procedure_result', result_id, document_id,
+                     citation=lab.get('source_citation'),
+                     field=f"lab_results[{lab.get('test_name','')}]")
 
         flag_display = f"⚠️ {flag}" if flag else "✓"
         print(f"    📊 {test_name}: {value} {unit} {flag_display}")
 
     print(f"  ✅ {len(labs)} lab results stored in procedure tables (order={order_id}, report={report_id})")
-
-    # Store document reference (Lab Report category)
-    store_document(patient_pid, source_path, collection_date, category_id=2)
-    print(f"  ✅ Lab document reference stored for pid={patient_pid}")
 
 
 def main():
