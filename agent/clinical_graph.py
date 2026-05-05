@@ -159,6 +159,47 @@ estimating. Be concise and clinically useful.
 """
 
 
+# Briefing format used in Week 1 — applied when the query asks for a
+# pre-room briefing / pre-room summary. Keeps the structure stable across
+# patients and under 150 words so the PCP can read it in 30 seconds.
+_BRIEFING_FORMAT = """
+PRE-ROOM BRIEFING FORMAT (apply when the question asks for a pre-room
+briefing or pre-room summary):
+
+Do NOT include a top-level header like "Pre-Room Briefing" or "## PRE-ROOM
+BRIEFING". Start directly with the section labels below, in this exact
+order, each on its own line:
+
+**TODAY:** [What the visit appears to be about, with the encounter
+reason and date if available. Cite the source if a document quote is
+available, otherwise state plainly.]
+**CHANGES:** [What has changed since the last visit — newly worsened
+symptoms, new conditions, abnormal trends. If the chart has only one
+encounter, say "First documented visit" or similar.]
+**ACTIVE CONDITIONS:** [Chronic problems to keep in mind, in order of
+clinical priority. One short line.]
+**KEY MEDICATIONS:** [Relevant medications. Group by class if helpful.
+Skip irrelevant OTCs.]
+**ALLERGIES:** [Known allergies with reactions. If none, say "NKDA" or
+"No known drug allergies".]
+**LABS:** [Recent abnormal lab values worth flagging. If no labs in
+chart, say "No laboratory results documented".]
+**KEY POINTS:** [1-2 sentence clinical focus for this visit. The single
+most important thing the PCP needs to remember.]
+
+Keep the entire briefing under 150 words. Be terse. Each section is one
+short line, not a bulleted list. Citation rules above still apply: cite
+inline when source.document is present, state plainly otherwise.
+"""
+
+_BRIEFING_TRIGGERS = ("briefing", "pre-room", "pre room")
+
+
+def _is_briefing(query: str) -> bool:
+    q = (query or "").lower()
+    return any(t in q for t in _BRIEFING_TRIGGERS)
+
+
 def _state_summary(state: GraphState) -> str:
     parts = [f"query: {state.get('query')!r}"]
     if state.get("patient_id"):
@@ -198,7 +239,8 @@ def _usage_dict(resp) -> dict:
 
 def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
     """Second LLM call — returns (answer_text, token_usage)."""
-    parts = [f"Question: {state.get('query')}"]
+    query = state.get("query") or ""
+    parts = [f"Question: {query}"]
     if state.get("chart"):
         parts.append("Patient chart (with source citations):\n" +
                      json.dumps(state["chart"], indent=2, default=str))
@@ -213,10 +255,15 @@ def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
             for i, e in enumerate(state["evidence"])
         )
         parts.append("Evidence snippets (full):\n" + ev)
+
+    # Apply the W1 briefing template when the question is a pre-room briefing
+    # so the format stays stable across all patients.
+    system = _ANSWER_SYSTEM + (_BRIEFING_FORMAT if _is_briefing(query) else "")
+
     resp = _client.messages.create(
         model=MODEL,
         max_tokens=2048,
-        system=_ANSWER_SYSTEM,
+        system=system,
         messages=[{"role": "user", "content": "\n\n".join(parts)}],
     )
     return resp.content[0].text.strip(), _usage_dict(resp)
