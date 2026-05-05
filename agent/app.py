@@ -8,16 +8,16 @@ import json
 import time
 import requests
 import urllib3
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from anthropic import Anthropic
 from langsmith.wrappers import wrap_anthropic
-from langsmith.wrappers import wrap_anthropic
-from langsmith.wrappers import wrap_anthropic
 from tools import TOOLS, execute_tool
 from verification import verify_response
+from document_extractor import extract_document
+from pathlib import Path
 
 urllib3.disable_warnings()
 
@@ -94,10 +94,15 @@ When the PCP asks for a briefing, call tools in this order:
 4. get_recent_encounters - visit history and today's reason
 5. get_recent_labs - if relevant to conditions
 
-Structure briefings as:
-- TODAY: What the visit appears to be about
-- CHANGES: What's changed since last visit
-- ACTIVE CONDITIONS: Chronic problems to keep in mind
+Structure briefings EXACTLY as follows. Do NOT include a top-level header like "Pre-Room Briefing" or "## PRE-ROOM BRIEFING". Start directly with the section labels:
+
+**TODAY:** [What the visit appears to be about, with encounter citation]
+**CHANGES:** [What's changed since last visit]
+**ACTIVE CONDITIONS:** [Chronic problems to keep in mind, with condition citations]
+**KEY MEDICATIONS:** [Relevant medications with citations]
+**ALLERGIES:** [Known allergies]
+**LABS:** [Recent lab results or "No laboratory results documented"]
+**KEY POINTS:** [1-2 sentence clinical focus for this visit]
 """
 
 
@@ -128,8 +133,7 @@ async def chat(req: ChatRequest):
     messages = []
     for msg in req.conversation_history:
         messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": f"[Patient ID: {req.patient_id}]\n\n{req.message}"})
-
+    messages.append({"role": "user", "content": req.message})
 
     # Tool definitions for Claude
     tool_defs = [
@@ -216,9 +220,32 @@ async def chat(req: ChatRequest):
     raise HTTPException(status_code=500, detail="Agent exceeded max iterations")
 
 
-@app.get("/ui")
-async def ui():
-    return FileResponse("chat.html")
+
+
+@app.post("/extract")
+async def extract_doc(
+    file: UploadFile = File(...),
+    patient_id: str = Form(...),
+    doc_type: str = Form(...),
+):
+    """Upload and extract a clinical document (lab PDF or intake form)."""
+    import tempfile
+    from document_extractor import attach_and_extract
+    
+    # Save uploaded file temporarily
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    try:
+        token = get_openemr_token()
+        result = attach_and_extract(patient_id, tmp_path, doc_type, token, OPENEMR_BASE)
+        return result
+    finally:
+        os.unlink(tmp_path)
+
 
 @app.get("/health")
 async def health():

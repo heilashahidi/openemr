@@ -674,7 +674,7 @@
 </div>
 
 <script>
-const AGENT_URL = 'https://agent-copilot.ngrok-free.dev';
+const AGENT_URL = 'http://localhost:8000';
 let conversationHistory = [];
 let selectedPatientId = '';
 
@@ -815,19 +815,21 @@ function parseBriefing(text) {
   let currentLabel = 'Summary';
   let currentContent = '';
 
+  // Labels to skip — these are top-level headers, not content sections
+  const skipLabels = ['pre-room briefing', 'summary', 'patient briefing', 'briefing'];
+
   for (const line of lines) {
     // Match **LABEL:** or ## LABEL patterns
-    const boldMatch = line.match(/^\*\*([A-Z\s]+?)[:.]?\*\*[:\s]*(.*)/);
-    const headerMatch = line.match(/^##\s+(.*)/);
-
+    const boldMatch = line.match(/^\*\*([A-Za-z\s]+?)[:.]?\*\*[:\s]*(.*)/);
+    const headerMatch = line.match(/^##\s+(.*)/i);
     if (boldMatch) {
-      if (currentContent.trim()) {
+      if (currentContent.trim() && !skipLabels.includes(currentLabel.toLowerCase())) {
         sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
       }
       currentLabel = boldMatch[1].trim();
       currentContent = boldMatch[2] || '';
     } else if (headerMatch) {
-      if (currentContent.trim()) {
+      if (currentContent.trim() && !skipLabels.includes(currentLabel.toLowerCase())) {
         sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
       }
       currentLabel = headerMatch[1].trim();
@@ -837,7 +839,7 @@ function parseBriefing(text) {
     }
   }
 
-  if (currentContent.trim()) {
+  if (currentContent.trim() && !skipLabels.includes(currentLabel.toLowerCase())) {
     sections.push({ label: currentLabel, content: formatContent(currentContent.trim()) });
   }
 
