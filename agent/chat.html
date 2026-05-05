@@ -660,7 +660,7 @@
     </div>
     <div class="input-area">
       <div class="input-row">
-        <textarea id="messageInput" placeholder="Ask about this patient..." rows="1" onkeydown="handleKey(event)"></textarea>
+        <textarea id="messageInput" placeholder="Ask about this patient — or ask a general guideline question..." rows="1" onkeydown="handleKey(event)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -980,7 +980,9 @@ async function sendMessage() {
   const message = input.value.trim();
 
   if (!message) return;
-  if (!patientId) { alert('Please select a patient first.'); return; }
+  // patientId is optional — the agent can answer general guideline questions
+  // (e.g. "what does the ADA recommend for HbA1c targets?") without a patient
+  // in context. The supervisor only routes to chart_lookup when a pid is set.
 
   addMessage('user', message);
   input.value = '';
