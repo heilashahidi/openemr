@@ -1,0 +1,89 @@
+name: Agent evals
+
+# Runs the 50-case clinical-graph eval against the agent under agent/.
+# Spins up the OpenEMR development-easy compose stack so that DB-backed
+# tests (citations, chart_lookup) have a real MariaDB to talk to.
+# Fails the workflow if the per-category pass count regresses below the
+# committed baseline in agent/eval_baseline.json.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-evals.yml"
+  pull_request:
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-evals.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: agent-evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify ANTHROPIC_API_KEY secret is set
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is required for the LLM-dependent eval categories."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install agent dependencies
+        working-directory: agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Bring up OpenEMR development stack
+        working-directory: docker/development-easy
+        run: |
+          docker compose up --detach --wait
+          # Wait until the openemr container reports healthy.
+          for i in $(seq 1 60); do
+            status=$(docker compose ps --format json | python3 -c "import sys,json; print('|'.join(c.get('Health','') for c in [json.loads(l) for l in sys.stdin if l.strip()]))" || true)
+            echo "[$i] health: $status"
+            echo "$status" | grep -q "starting" || break
+            sleep 5
+          done
+
+      - name: Seed sample patients (extract + ingest the 4 sample documents)
+        working-directory: agent
+        run: |
+          python ingest_to_openemr.py
+          python backfill_family_history.py
+          python backfill_address_and_lab_notes.py
+          python backfill_citations.py
+
+      - name: Run 50-case eval
+        working-directory: agent
+        run: |
+          python eval_clinical_graph.py
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-clinical-results
+          path: agent/eval_clinical_results.json
+
+      - name: Tear down compose stack
+        if: always()
+        working-directory: docker/development-easy
+        run: docker compose down --volumes --remove-orphans
