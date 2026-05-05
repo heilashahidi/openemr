@@ -674,7 +674,9 @@
 </div>
 
 <script>
-const AGENT_URL = 'http://localhost:8000';
+// Derive from the page's own origin so this works whether the iframe is
+// served from localhost (dev) or from the ngrok tunnel (deployed).
+const AGENT_URL = window.location.origin;
 let conversationHistory = [];
 let selectedPatientId = '';
 

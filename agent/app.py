@@ -256,3 +256,9 @@ async def extract_doc(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/ui")
+async def ui():
+    """Serve the chat iframe UI. Loaded by demographics.php in OpenEMR."""
+    return FileResponse(Path(__file__).parent / "chat.html", media_type="text/html")
