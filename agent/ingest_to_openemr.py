@@ -20,12 +20,32 @@ MARIADB_CMD = "docker exec -i $(docker ps | grep maria | awk '{print $1}') maria
 
 def run_sql(sql):
     """Execute SQL against OpenEMR's MariaDB."""
-    cmd = f'docker exec -i $(docker ps | grep maria | awk \'{{print $1}}\') mariadb -u root -proot openemr -e "{sql}"'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    # Get container ID
+    cid = subprocess.run("docker ps | grep maria | awk '{print $1}'", shell=True, capture_output=True, text=True).stdout.strip()
+    if not cid:
+        print("  SQL Error: MariaDB container not found")
+        return None
+    result = subprocess.run(
+        ["docker", "exec", "-i", cid, "mariadb", "-u", "root", "-proot", "openemr"],
+        input=sql, capture_output=True, text=True
+    )
     if result.returncode != 0:
-        print(f"  SQL Error: {result.stderr.strip()}")
+        print(f"  SQL Error: {result.stderr.strip()[:200]}")
         return None
     return result.stdout.strip()
+
+
+def run_sql_insert(sql):
+    """Execute INSERT and return LAST_INSERT_ID in a single connection."""
+    combined = f"{sql} SELECT LAST_INSERT_ID();"
+    result = run_sql(combined)
+    if result is None:
+        return 0
+    lines = result.strip().split('\n')
+    for line in reversed(lines):
+        if line.strip().isdigit():
+            return int(line.strip())
+    return 0
 
 
 def get_next_pid():
@@ -170,27 +190,53 @@ def ingest_intake_form(extraction, source_file):
 
 
 def ingest_lab_results(extraction, patient_pid, source_file):
-    """Add lab results to an existing patient's chart."""
+    """Add lab results to an existing patient's chart via procedure tables."""
     data = extraction
     labs = data.get('lab_results', [])
+    collection_date = data.get('collection_date', '2026-04-20')
 
     print(f"\n  Adding {len(labs)} lab results to pid={patient_pid}")
 
+    # Get the encounter_id for this patient
+    enc_result = run_sql(f"SELECT id FROM form_encounter WHERE pid={patient_pid} ORDER BY id DESC LIMIT 1;")
+    encounter_id = 0
+    if enc_result:
+        lines = enc_result.strip().split('\n')
+        if len(lines) > 1 and lines[1].strip().isdigit():
+            encounter_id = int(lines[1].strip())
+
+    # 1. Create procedure_order
+    order_id = run_sql_insert(f"INSERT INTO procedure_order (uuid, provider_id, patient_id, encounter_id, date_collected, date_ordered, order_priority, order_status, activity) VALUES (UNHEX(REPLACE(UUID(),'-','')), 1, {patient_pid}, {encounter_id}, '{collection_date}', '{collection_date}', 'normal', 'complete', 1);")
+
+    if not order_id:
+        print(f"  ❌ Failed to create procedure_order")
+        return
+
+    # 2. Create procedure_report
+    report_id = run_sql_insert(f"INSERT INTO procedure_report (uuid, procedure_order_id, procedure_order_seq, date_collected, date_report, report_status, review_status) VALUES (UNHEX(REPLACE(UUID(),'-','')), {order_id}, 1, '{collection_date}', '{collection_date}', 'final', 'received');")
+
+    if not report_id:
+        print(f"  ❌ Failed to create procedure_report")
+        return
+
+    # 3. Insert each lab result
     for lab in labs:
         test_name = escape_sql(lab.get('test_name', ''))
         value = escape_sql(lab.get('value', ''))
         unit = escape_sql(lab.get('unit', ''))
         ref_range = escape_sql(lab.get('reference_range', ''))
-        flag = lab.get('abnormal_flag', '')
-        collection_date = lab.get('collection_date', '2026-04-20')
+        flag = escape_sql(lab.get('abnormal_flag', '') or '')
 
-        # Store as form_vitals or procedure_result — using a simple encounter note for now
-        print(f"    📊 {test_name}: {value} {unit} {'⚠️ ' + flag if flag else '✓'}")
+        run_sql(f"INSERT INTO procedure_result (uuid, procedure_report_id, result_data_type, result_code, result_text, date, units, result, `range`, abnormal, result_status) VALUES (UNHEX(REPLACE(UUID(),'-','')), {report_id}, 'S', '', '{test_name}', '{collection_date}', '{unit}', '{value}', '{ref_range}', '{flag}', 'final');")
+
+        flag_display = f"⚠️ {flag}" if flag else "✓"
+        print(f"    📊 {test_name}: {value} {unit} {flag_display}")
+
+    print(f"  ✅ {len(labs)} lab results stored in procedure tables (order={order_id}, report={report_id})")
 
     # Store document reference
     mimetype = "image/png" if source_file.endswith(".png") else "application/pdf"
-    form_date = data.get('collection_date', '2026-04-20')
-    sql = f"INSERT INTO documents (id, uuid, type, size, date, mimetype, owner, revision, foreign_id, docdate, name, storagemethod) SELECT COALESCE(MAX(id),0)+1, UNHEX(REPLACE(UUID(),'-','')), 'file_url', 0, NOW(), '{mimetype}', 1, NOW(), {patient_pid}, '{form_date}', '{escape_sql(source_file)}', 0 FROM documents;"
+    sql = f"INSERT INTO documents (id, uuid, type, size, date, mimetype, owner, revision, foreign_id, docdate, name, storagemethod) SELECT COALESCE(MAX(id),0)+1, UNHEX(REPLACE(UUID(),'-','')), 'file_url', 0, NOW(), '{mimetype}', 1, NOW(), {patient_pid}, '{collection_date}', '{escape_sql(source_file)}', 0 FROM documents;"
     run_sql(sql)
     print(f"  ✅ Lab document reference stored for pid={patient_pid}")
 
