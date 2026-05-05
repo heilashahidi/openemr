@@ -26,10 +26,23 @@ LABS = [
 
 
 def fix_addresses():
+    """Parse addresses only when city/state/postal are empty (idempotent).
+
+    If the address has already been split into separate columns we leave it
+    alone — re-parsing the trimmed `street` would clobber the other columns.
+    """
     print("=== Fix addresses ===")
-    out = run_sql("SELECT pid, street FROM patient_data WHERE pid IN (10,11,12,13);")
+    out = run_sql(
+        "SELECT pid, street, city, state, postal_code FROM patient_data WHERE pid IN (10,11,12,13);"
+    )
     for line in out.strip().split("\n")[1:]:
-        pid, blob = line.split("\t", 1)
+        cells = line.split("\t")
+        pid = cells[0]
+        blob = cells[1] if len(cells) > 1 else ""
+        city = cells[2] if len(cells) > 2 else ""
+        if city.strip():
+            print(f"  pid={pid}: already split, skipping")
+            continue
         street, city, state, postal = parse_address(blob)
         run_sql(
             f"UPDATE patient_data SET street='{escape_sql(street)}', city='{escape_sql(city)}', "
@@ -38,29 +51,43 @@ def fix_addresses():
         print(f"  pid={pid}: {street} | {city} | {state} | {postal}")
 
 
-def backfill_interpretive_comments():
-    print("\n=== Re-extract labs for interpretive comments ===")
+def backfill_lab_metadata():
+    print("\n=== Re-extract labs for interpretive comments + specimen info ===")
     for pid, path in LABS:
         print(f"\n  pid={pid} {os.path.basename(path)}")
         result = extract_document(path, "lab_pdf")
         if not result.get("success"):
             print(f"    ❌ Extraction failed: {result.get('error')}")
             continue
-        comments = result["extraction"].get("interpretive_comments")
-        if not comments:
-            print("    (no interpretive comments in source)")
-            continue
+        ext = result["extraction"]
 
-        # Update the procedure_report for this patient's most recent order
-        run_sql(
-            f"UPDATE procedure_report pr "
-            f"JOIN procedure_order po ON po.procedure_order_id = pr.procedure_order_id "
-            f"SET pr.report_notes = '{escape_sql(comments)}' "
-            f"WHERE po.patient_id = {pid};"
-        )
-        print(f"    ✅ saved ({len(comments)} chars): {comments[:90]}...")
+        # Specimen → procedure_order
+        spec_type = ext.get("specimen_type") or ""
+        spec_vol = ext.get("specimen_volume") or ""
+        if spec_type or spec_vol:
+            run_sql(
+                f"UPDATE procedure_order SET specimen_type='{escape_sql(spec_type)}', "
+                f"specimen_volume='{escape_sql(spec_vol)}' WHERE patient_id={pid};"
+            )
+            print(f"    ✅ specimen: {spec_type} / {spec_vol}")
+
+        # Interpretive + specimen notes → procedure_report
+        spec_notes = (ext.get("specimen_notes") or "").strip()
+        interp = (ext.get("interpretive_comments") or "").strip()
+        combined = "\n\n".join(p for p in [
+            f"Specimen notes: {spec_notes}" if spec_notes else "",
+            interp,
+        ] if p)
+        if combined:
+            run_sql(
+                f"UPDATE procedure_report pr "
+                f"JOIN procedure_order po ON po.procedure_order_id = pr.procedure_order_id "
+                f"SET pr.report_notes = '{escape_sql(combined)}' "
+                f"WHERE po.patient_id = {pid};"
+            )
+            print(f"    ✅ report_notes ({len(combined)} chars)")
 
 
 if __name__ == "__main__":
     fix_addresses()
-    backfill_interpretive_comments()
+    backfill_lab_metadata()

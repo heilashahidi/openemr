@@ -564,15 +564,29 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         if len(lines) > 1 and lines[1].strip().isdigit():
             encounter_id = int(lines[1].strip())
 
-    # 1. Create procedure_order
-    order_id = run_sql_insert(f"INSERT INTO procedure_order (uuid, provider_id, patient_id, encounter_id, date_collected, date_ordered, order_priority, order_status, activity) VALUES (UNHEX(REPLACE(UUID(),'-','')), 1, {patient_pid}, {encounter_id}, '{collection_date}', '{collection_date}', 'normal', 'complete', 1);")
+    # 1. Create procedure_order with specimen info
+    spec_type = escape_sql(data.get('specimen_type') or '')
+    spec_vol = escape_sql(data.get('specimen_volume') or '')
+    order_id = run_sql_insert(
+        f"INSERT INTO procedure_order (uuid, provider_id, patient_id, encounter_id, date_collected, date_ordered, "
+        f"order_priority, order_status, activity, specimen_type, specimen_volume) "
+        f"VALUES (UNHEX(REPLACE(UUID(),'-','')), 1, {patient_pid}, {encounter_id}, '{collection_date}', '{collection_date}', "
+        f"'normal', 'complete', 1, '{spec_type}', '{spec_vol}');"
+    )
 
     if not order_id:
         print(f"  ❌ Failed to create procedure_order")
         return
 
-    # 2. Create procedure_report
-    interp = escape_sql(data.get('interpretive_comments') or '')
+    # 2. Create procedure_report. Prepend specimen_notes (if any) so they show
+    # alongside the interpretation in the chart's report-notes panel.
+    spec_notes = (data.get('specimen_notes') or '').strip()
+    interp_text = (data.get('interpretive_comments') or '').strip()
+    combined = "\n\n".join(p for p in [
+        f"Specimen notes: {spec_notes}" if spec_notes else "",
+        interp_text,
+    ] if p)
+    interp = escape_sql(combined)
     report_id = run_sql_insert(
         f"INSERT INTO procedure_report (uuid, procedure_order_id, procedure_order_seq, date_collected, date_report, report_status, review_status, report_notes) "
         f"VALUES (UNHEX(REPLACE(UUID(),'-','')), {order_id}, 1, '{collection_date}', '{collection_date}', 'final', 'received', '{interp}');"
