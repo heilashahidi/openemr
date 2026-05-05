@@ -3,7 +3,9 @@ Evidence Retriever for Clinical Co-Pilot (Week 2).
 Indexes clinical guidelines with hybrid keyword + dense retrieval.
 Reranks results using combined scoring.
 
-Corpus: agent/guidelines/*.md
+Corpus: agent/external_corpus/*.md  (FDA drug labels + PubMed abstracts,
+fetched from the OpenFDA and NCBI E-utilities APIs by
+fetch_external_guidelines.py — no hand-written internal docs).
 """
 
 import os
@@ -14,7 +16,7 @@ from collections import Counter
 from pathlib import Path
 import chromadb
 
-GUIDELINES_DIR = os.path.join(os.path.dirname(__file__), "guidelines")
+GUIDELINES_DIR = os.path.join(os.path.dirname(__file__), "external_corpus")
 COLLECTION_NAME = "clinical_guidelines"
 
 # Module-level ChromaDB client

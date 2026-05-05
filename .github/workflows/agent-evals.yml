@@ -63,6 +63,14 @@ jobs:
             sleep 5
           done
 
+      - name: Verify external corpus is committed
+        working-directory: agent
+        run: |
+          # The corpus is cached in the repo so CI doesn't depend on FDA /
+          # PubMed API uptime. Refresh locally with fetch_external_guidelines.py.
+          test -d external_corpus
+          echo "external_corpus contains $(ls external_corpus/*.md | wc -l) files"
+
       - name: Seed sample patients (extract + ingest the 4 sample documents)
         working-directory: agent
         run: |

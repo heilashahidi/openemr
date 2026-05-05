@@ -18,8 +18,10 @@ Data-store boundary (DO NOT VIOLATE):
     reads patient data directly from those tables.
 
     The vector DB (ChromaDB, populated by evidence_retriever) holds ONLY
-    the clinical-guideline corpus under agent/guidelines/*.md. It must
-    never index or embed patient-derived text.
+    the external clinical corpus under agent/external_corpus/*.md (FDA
+    drug labels + PubMed abstracts fetched from public APIs). It must
+    never index or embed patient-derived text, and the corpus is
+    explicitly external — no hand-written internal guidelines.
 
     The legacy `rag.py` module chunks patient encounter notes into a
     vector DB; it is intentionally NOT imported anywhere in this graph
