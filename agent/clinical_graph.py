@@ -63,8 +63,16 @@ def _append(left: list, right: list) -> list:
     return (left or []) + (right or [])
 
 
+def _merge_usage(left: dict, right: dict) -> dict:
+    """Reducer for token-usage state — sums each key across worker visits."""
+    out = dict(left or {})
+    for k, v in (right or {}).items():
+        out[k] = out.get(k, 0) + (v or 0)
+    return out
+
+
 class GraphState(TypedDict, total=False):
-    """Shared state. `handoffs` is append-only so the trace is auditable."""
+    """Shared state. `handoffs` and `usage` accumulate across worker visits."""
     query: str                             # The clinician question
     patient_id: Optional[int]              # OpenEMR pid for chart lookup
     file_path: Optional[str]               # Document path, if one was attached
@@ -74,6 +82,7 @@ class GraphState(TypedDict, total=False):
     chart: Optional[dict]                  # Result from chart_lookup
     final_answer: Optional[str]            # Filled when supervisor decides we're done
     handoffs: Annotated[list, _append]     # Audit trail of handoff decisions
+    usage: Annotated[dict, _merge_usage]   # Token totals across all LLM calls
     next: Optional[str]                    # Supervisor's next-step decision
 
 
@@ -171,8 +180,18 @@ def _parse_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _synthesize_answer(state: GraphState) -> str:
-    """Second call: write the final answer from the FULL state, not the summary."""
+def _usage_dict(resp) -> dict:
+    """Extract input/output token counts from an Anthropic response."""
+    u = getattr(resp, "usage", None)
+    if not u:
+        return {}
+    inp = getattr(u, "input_tokens", 0) or 0
+    out = getattr(u, "output_tokens", 0) or 0
+    return {"input": inp, "output": out, "total": inp + out}
+
+
+def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
+    """Second LLM call — returns (answer_text, token_usage)."""
     parts = [f"Question: {state.get('query')}"]
     if state.get("chart"):
         parts.append("Patient chart (with source citations):\n" +
@@ -194,7 +213,7 @@ def _synthesize_answer(state: GraphState) -> str:
         system=_ANSWER_SYSTEM,
         messages=[{"role": "user", "content": "\n\n".join(parts)}],
     )
-    return resp.content[0].text.strip()
+    return resp.content[0].text.strip(), _usage_dict(resp)
 
 
 def supervisor(state: GraphState) -> GraphState:
@@ -212,6 +231,7 @@ def supervisor(state: GraphState) -> GraphState:
     )
     decision = _parse_json(resp.content[0].text)
 
+    usage = _usage_dict(resp)
     update: GraphState = {
         "next": decision["next"],
         "handoffs": [{
@@ -219,9 +239,13 @@ def supervisor(state: GraphState) -> GraphState:
             "to": decision["next"],
             "reason": decision.get("reason", ""),
         }],
+        "usage": usage,
     }
     if decision["next"] == "finish":
-        update["final_answer"] = _synthesize_answer(state)
+        answer, syn_usage = _synthesize_answer(state)
+        update["final_answer"] = answer
+        # Combine routing-call usage and synthesis-call usage for this turn.
+        update["usage"] = _merge_usage(usage, syn_usage)
     return update
 
 
@@ -248,6 +272,16 @@ def intake_extractor(state: GraphState) -> GraphState:
             "handoffs": [{"from": "intake_extractor", "to": "supervisor", "reason": "no file"}],
         }
     result = extract_document(file_path, doc_type)
+    # extract_document already returns `tokens: {input, output}`; promote it
+    # into the graph's running usage tally.
+    tok = result.get("tokens") or {}
+    usage = {}
+    if tok:
+        usage = {
+            "input": tok.get("input", 0) or 0,
+            "output": tok.get("output", 0) or 0,
+        }
+        usage["total"] = usage["input"] + usage["output"]
     return {
         "extraction": result,
         "handoffs": [{
@@ -255,6 +289,7 @@ def intake_extractor(state: GraphState) -> GraphState:
             "to": "supervisor",
             "reason": f"extracted {os.path.basename(file_path)} ({'ok' if result.get('success') else 'error'})",
         }],
+        "usage": usage,
     }
 
 
@@ -457,7 +492,7 @@ index_guidelines()
 
 def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0) -> dict:
     """Convenience runner. Returns the terminal state."""
-    initial: GraphState = {"query": query, "handoffs": []}
+    initial: GraphState = {"query": query, "handoffs": [], "usage": {}}
     if file_path:
         initial["file_path"] = file_path
         initial["doc_type"] = doc_type or "intake_form"

@@ -212,11 +212,16 @@ async def chat(req: ChatRequest):
     # boolean so the UI can still render the verification badge.
     verified = bool(final_text)
 
+    usage = result.get("usage") or {}
     return ChatResponse(
         response=final_text,
         citations=citations,
         tools_called=tools_called,
-        tokens_used={"input": 0, "output": 0, "total": 0},
+        tokens_used={
+            "input": usage.get("input", 0),
+            "output": usage.get("output", 0),
+            "total": usage.get("total", 0),
+        },
         verified=verified,
     )
 
