@@ -12,6 +12,7 @@ Run: python3 ingest_to_openemr.py
 
 import hashlib
 import json
+import re
 import subprocess
 import os
 import uuid as uuidlib
@@ -108,6 +109,28 @@ def parse_dob(dob_str):
     return dob_str
 
 
+def parse_address(addr_str):
+    """Split an address blob into (street, city, state, postal_code).
+
+    Expected pattern:
+        "<street>, [<unit>,] <city>, <STATE> <ZIP>"
+    Returns the full input as `street` if parsing fails.
+    """
+    if not addr_str:
+        return ("", "", "", "")
+    parts = [p.strip() for p in addr_str.split(",") if p.strip()]
+    if len(parts) < 3:
+        return (addr_str, "", "", "")
+    state_zip = parts[-1].split()
+    if len(state_zip) >= 2 and len(state_zip[0]) == 2:
+        state = state_zip[0]
+        postal = " ".join(state_zip[1:])
+        city = parts[-2]
+        street = ", ".join(parts[:-2])
+        return (street, city, state, postal)
+    return (addr_str, "", "", "")
+
+
 def parse_sex(sex_str):
     """Normalize sex field."""
     if not sex_str:
@@ -125,6 +148,224 @@ def escape_sql(val):
     if val is None:
         return ''
     return str(val).replace("'", "\\'").replace('"', '\\"')
+
+
+RELATION_TO_COLUMN = {
+    'mother': 'history_mother',
+    'mom': 'history_mother',
+    'father': 'history_father',
+    'dad': 'history_father',
+    'sister': 'history_siblings',
+    'brother': 'history_siblings',
+    'sibling': 'history_siblings',
+    'siblings': 'history_siblings',
+    'son': 'history_offspring',
+    'daughter': 'history_offspring',
+    'child': 'history_offspring',
+    'children': 'history_offspring',
+    'offspring': 'history_offspring',
+    'spouse': 'history_spouse',
+    'husband': 'history_spouse',
+    'wife': 'history_spouse',
+    'partner': 'history_spouse',
+}
+
+
+def populate_family_history(pid, family_history):
+    """Map extracted family_history entries to OpenEMR's history_data columns.
+
+    OpenEMR stores family history per-relation in `history_data` as free text
+    (history_mother, history_father, history_siblings, history_offspring,
+    history_spouse). Anything that doesn't map to one of these (grandparent,
+    aunt, uncle, etc.) is appended to `additional_history`.
+    """
+    if not family_history:
+        return
+
+    fields = {}  # column → list[str]
+    extras = []
+    for entry in family_history:
+        relation_raw = (entry.get('relation') or '').strip().lower()
+        conditions = entry.get('conditions') or []
+        status = (entry.get('status') or '').strip()
+
+        text = ', '.join(conditions) if conditions else '(no conditions reported)'
+        if status:
+            text = f"{text} ({status})"
+
+        col = RELATION_TO_COLUMN.get(relation_raw)
+        if col:
+            fields.setdefault(col, []).append(text)
+        else:
+            extras.append(f"{entry.get('relation','Relative')}: {text}")
+
+    if extras:
+        fields.setdefault('additional_history', []).append('; '.join(extras))
+
+    # Upsert: history_data has at most one row per pid (no UNIQUE constraint
+    # in older schemas, but the UI updates a single row).
+    existing = run_sql(f"SELECT id FROM history_data WHERE pid={pid} LIMIT 1;")
+    has_row = existing and len(existing.strip().split('\n')) > 1
+
+    set_clauses = ", ".join(
+        f"{col}='{escape_sql(' / '.join(values))}'"
+        for col, values in fields.items()
+    )
+    if has_row:
+        run_sql(f"UPDATE history_data SET {set_clauses} WHERE pid={pid};")
+    else:
+        cols = ", ".join(fields.keys())
+        vals = ", ".join(f"'{escape_sql(' / '.join(v))}'" for v in fields.values())
+        run_sql(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+    print(f"  ✅ Family history populated ({len(family_history)} entries → {len(fields)} columns)")
+
+
+def populate_emergency_contact(pid, ec_text):
+    """Parse 'Name (Relationship) - Phone' and write to patient_data.
+
+    OpenEMR has phone_contact + contact_relationship; no dedicated name field,
+    so the name is folded into contact_relationship.
+    """
+    if not ec_text:
+        return
+    # Pull out a phone number
+    phone_match = re.search(r'\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}', ec_text)
+    phone = phone_match.group(0) if phone_match else ''
+    # Strip phone from text to get name + relationship part
+    name_rel = re.sub(r'\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}', '', ec_text).strip(' -—')
+    run_sql(
+        f"UPDATE patient_data SET phone_contact='{escape_sql(phone)}', "
+        f"contact_relationship='{escape_sql(name_rel)}' WHERE pid={pid};"
+    )
+    print(f"  ✅ Emergency contact: {name_rel} / {phone}")
+
+
+def populate_insurance(pid, ins_text):
+    """Insert a single primary insurance_data row from the free-text extraction.
+
+    Pattern handled: '<Provider/Plan> - Member ID: <policy>' (case-insensitive
+    label). Falls back to dumping the whole string into `provider` if we can't
+    isolate a policy number.
+    """
+    if not ins_text:
+        return
+    # Skip values that look like MRNs masquerading as insurance — the LLM
+    # sometimes grabs them from forms that have no real insurance section.
+    if re.match(r'^\s*MRN[\s\-:]', ins_text, re.IGNORECASE):
+        print(f"  ⏭️  Insurance skipped (looks like MRN): {ins_text}")
+        return
+
+    provider, policy = ins_text, ''
+    m = re.search(r'(?:member\s*id|policy\s*(?:number|#)?|id\s*#?)\s*:?\s*([\w\-]+)', ins_text, re.IGNORECASE)
+    if m:
+        policy = m.group(1)
+        provider = ins_text[:m.start()].strip(' -—:,')
+    run_sql(
+        f"DELETE FROM insurance_data WHERE pid={pid} AND type='primary';"
+    )
+    run_sql(
+        f"INSERT INTO insurance_data (pid, type, provider, policy_number, date) "
+        f"VALUES ({pid}, 'primary', '{escape_sql(provider)}', '{escape_sql(policy)}', CURDATE());"
+    )
+    print(f"  ✅ Insurance: {provider} / policy={policy}")
+
+
+def populate_problem_list(pid, conditions, form_date):
+    """Insert each condition as a lists row (type='medical_problem')."""
+    if not conditions:
+        return
+    for cond in conditions:
+        cond = str(cond).strip()
+        if not cond:
+            continue
+        # Skip if already present (avoid duplicates on re-runs)
+        existing = run_sql(
+            f"SELECT id FROM lists WHERE pid={pid} AND type='medical_problem' AND title='{escape_sql(cond)}' LIMIT 1;"
+        )
+        if existing and len(existing.strip().split('\n')) > 1:
+            continue
+        run_sql(
+            f"INSERT INTO lists (pid, type, title, begdate, activity) "
+            f"VALUES ({pid}, 'medical_problem', '{escape_sql(cond)}', '{form_date}', 1);"
+        )
+    print(f"  ✅ Past medical history: {len(conditions)} entries")
+
+
+def populate_surgical_history(pid, surgeries, form_date):
+    """Insert each surgery as a lists row (type='surgery')."""
+    if not surgeries:
+        return
+    for surg in surgeries:
+        surg = str(surg).strip()
+        if not surg:
+            continue
+        existing = run_sql(
+            f"SELECT id FROM lists WHERE pid={pid} AND type='surgery' AND title='{escape_sql(surg)}' LIMIT 1;"
+        )
+        if existing and len(existing.strip().split('\n')) > 1:
+            continue
+        run_sql(
+            f"INSERT INTO lists (pid, type, title, begdate, activity) "
+            f"VALUES ({pid}, 'surgery', '{escape_sql(surg)}', '{form_date}', 1);"
+        )
+    print(f"  ✅ Surgical history: {len(surgeries)} entries")
+
+
+def populate_treating_physicians(pid, physicians_text):
+    """Save treating physicians free-text into patient_data.care_team_provider."""
+    if not physicians_text:
+        return
+    run_sql(
+        f"UPDATE patient_data SET care_team_provider='{escape_sql(physicians_text)}' WHERE pid={pid};"
+    )
+    print(f"  ✅ Treating physicians: {physicians_text[:80]}")
+
+
+def populate_social_history(pid, social_history_text):
+    """Save the extracted social history blob into history_data.
+
+    The intake extraction returns social_history as free text. We also try to
+    pull out the most common structured columns (tobacco, alcohol, exercise)
+    via simple keyword scan; everything else lands in additional_history so it
+    is visible in the History panel.
+    """
+    if not social_history_text:
+        return
+
+    blob = social_history_text.strip()
+    fields = {'additional_history': blob}
+
+    # Best-effort structured extraction for the columns OpenEMR renders in the
+    # Social History panel. Each line/segment that mentions a known topic
+    # populates the matching column.
+    # Segment on commas, semicolons, and newlines so each topic-tagged phrase
+    # ("Tobacco: Never", "Alcohol: 2 drinks/week") becomes its own segment.
+    segments = [s.strip() for s in re.split(r'[;,\n]', blob) if s.strip()]
+    for seg in segments:
+        low = seg.lower()
+        if any(k in low for k in ('tobacco', 'smok', 'cigar', 'vape', 'nicotine')):
+            fields.setdefault('tobacco', seg)
+        elif any(k in low for k in ('alcohol', 'drink', 'beer', 'wine', 'liquor')):
+            fields.setdefault('alcohol', seg)
+        elif any(k in low for k in ('exercise', 'walk', 'gym', 'jog', 'run ', 'physical activity', 'sedentary', 'active')):
+            fields.setdefault('exercise_patterns', seg)
+        elif any(k in low for k in ('drug', 'marijuana', 'cocaine', 'recreational')):
+            fields.setdefault('recreational_drugs', seg)
+        elif any(k in low for k in ('coffee', 'caffeine', 'espresso')):
+            fields.setdefault('coffee', seg)
+        elif any(k in low for k in ('sleep', 'insomnia')):
+            fields.setdefault('sleep_patterns', seg)
+
+    existing = run_sql(f"SELECT id FROM history_data WHERE pid={pid} LIMIT 1;")
+    has_row = existing and len(existing.strip().split('\n')) > 1
+    set_clauses = ", ".join(f"{c}='{escape_sql(v)}'" for c, v in fields.items())
+    if has_row:
+        run_sql(f"UPDATE history_data SET {set_clauses} WHERE pid={pid};")
+    else:
+        cols = ", ".join(fields.keys())
+        vals = ", ".join(f"'{escape_sql(v)}'" for v in fields.values())
+        run_sql(f"INSERT INTO history_data (pid, uuid, date, {cols}) VALUES ({pid}, UNHEX(REPLACE(UUID(),'-','')), NOW(), {vals});")
+    print(f"  ✅ Social history populated ({len(fields)-1} structured fields + additional_history)")
 
 
 def next_encounter_number():
@@ -216,7 +457,7 @@ def ingest_intake_form(extraction, source_path):
     dob = parse_dob(data.get('patient_dob', ''))
     sex = parse_sex(data.get('patient_sex', ''))
     phone = escape_sql(data.get('patient_phone', ''))
-    address = escape_sql(data.get('patient_address', ''))
+    street, city, state, postal = parse_address(data.get('patient_address', ''))
     email = ''
 
     print(f"\n{'='*60}")
@@ -226,7 +467,11 @@ def ingest_intake_form(extraction, source_path):
     print(f"{'='*60}")
 
     # 1. Create patient
-    sql = f"INSERT INTO patient_data (pid, fname, lname, DOB, sex, phone_home, street) VALUES ({pid}, '{escape_sql(fname)}', '{escape_sql(lname)}', '{dob}', '{sex}', '{phone}', '{escape_sql(address)}');"
+    sql = (
+        f"INSERT INTO patient_data (pid, fname, lname, DOB, sex, phone_home, street, city, state, postal_code) "
+        f"VALUES ({pid}, '{escape_sql(fname)}', '{escape_sql(lname)}', '{dob}', '{sex}', '{phone}', "
+        f"'{escape_sql(street)}', '{escape_sql(city)}', '{escape_sql(state)}', '{escape_sql(postal)}');"
+    )
     run_sql(sql)
     print(f"  ✅ Patient created: {fname} {lname} (pid={pid})")
 
@@ -280,12 +525,18 @@ def ingest_intake_form(extraction, source_path):
     store_document(pid, source_path, form_date, category_id=4)
     print(f"  ✅ Source document reference stored in OpenEMR")
 
-    # 7. Add family history as notes
-    family = data.get('family_history', [])
-    if family:
-        fh_text = '; '.join([f"{f.get('relation','')}: {', '.join(f.get('conditions',[]))} ({f.get('status','')})" for f in family])
-        # Store as a note in the encounter
-        print(f"  ℹ️  Family history: {fh_text[:80]}")
+    # 7. Family + social history → history_data
+    populate_family_history(pid, data.get('family_history', []))
+    populate_social_history(pid, data.get('social_history'))
+
+    # 8. Past medical + surgical history → lists
+    populate_problem_list(pid, data.get('past_medical_history', []), form_date)
+    populate_surgical_history(pid, data.get('surgical_history', []), form_date)
+
+    # 9. Emergency contact, insurance, treating physicians → patient_data / insurance_data
+    populate_emergency_contact(pid, data.get('emergency_contact'))
+    populate_insurance(pid, data.get('insurance'))
+    populate_treating_physicians(pid, data.get('treating_physicians'))
 
     print(f"\n  ✅ Patient {fname} {lname} fully ingested into OpenEMR (pid={pid})")
     return pid
@@ -321,7 +572,11 @@ def ingest_lab_results(extraction, patient_pid, source_path):
         return
 
     # 2. Create procedure_report
-    report_id = run_sql_insert(f"INSERT INTO procedure_report (uuid, procedure_order_id, procedure_order_seq, date_collected, date_report, report_status, review_status) VALUES (UNHEX(REPLACE(UUID(),'-','')), {order_id}, 1, '{collection_date}', '{collection_date}', 'final', 'received');")
+    interp = escape_sql(data.get('interpretive_comments') or '')
+    report_id = run_sql_insert(
+        f"INSERT INTO procedure_report (uuid, procedure_order_id, procedure_order_seq, date_collected, date_report, report_status, review_status, report_notes) "
+        f"VALUES (UNHEX(REPLACE(UUID(),'-','')), {order_id}, 1, '{collection_date}', '{collection_date}', 'final', 'received', '{interp}');"
+    )
 
     if not report_id:
         print(f"  ❌ Failed to create procedure_report")

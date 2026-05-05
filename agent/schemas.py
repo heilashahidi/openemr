@@ -40,6 +40,7 @@ class LabPDFExtraction(BaseModel):
     report_date: Optional[str] = Field(default=None, description="Date the report was finalized")
     report_status: Optional[str] = Field(default=None, description="Report status: 'Final', 'Preliminary', etc.")
     lab_results: list[LabResult] = Field(description="List of individual lab test results")
+    interpretive_comments: Optional[str] = Field(default=None, description="Free-text interpretive comments / notes from the lab report (e.g., 'Mild anemia, recommend iron studies'). Capture all narrative comment sections verbatim.")
     source_document: str = Field(description="Original filename or document ID")
     extraction_confidence: Optional[float] = Field(default=None, description="Overall extraction confidence 0.0-1.0")
 
@@ -87,6 +88,9 @@ class IntakeFormExtraction(BaseModel):
     allergies: list[IntakeAllergy] = Field(description="List of known allergies")
     family_history: list[FamilyHistoryEntry] = Field(default_factory=list, description="Family medical history")
     social_history: Optional[str] = Field(default=None, description="Social history summary")
+    past_medical_history: list[str] = Field(default_factory=list, description="Past medical history / problem list (each entry is one condition, e.g. 'Hypertension', 'Type 2 diabetes')")
+    surgical_history: list[str] = Field(default_factory=list, description="Past surgical history (each entry is one surgery, e.g. 'Appendectomy 2010', 'Cholecystectomy 2018')")
+    treating_physicians: Optional[str] = Field(default=None, description="Treating physicians / care team — names and roles (e.g. 'Dr. Smith (PCP), Dr. Jones (Cardiologist)')")
     review_of_systems: Optional[dict] = Field(default=None, description="Review of systems by body system")
     
     # Metadata

@@ -45,7 +45,7 @@ For EACH test result, extract:
 - abnormal_flag: "H" for high, "L" for low, "C" for critical, null if normal
 - collection_date: specimen collection date in YYYY-MM-DD format
 
-Also extract patient_name, patient_dob, patient_mrn, ordering_provider, collection_date, report_date, report_status.
+Also extract patient_name, patient_dob, patient_mrn, ordering_provider, collection_date, report_date, report_status, and `interpretive_comments` (the free-text narrative comments / interpretation section if the lab provides one — capture it verbatim, joining multiple paragraphs with newlines; null if absent).
 
 For every field, include a source_citation with:
 - source_type: "lab_pdf"
@@ -55,12 +55,12 @@ For every field, include a source_citation with:
 - quote_or_value: the exact value as shown on the document
 
 Return ONLY valid JSON, no markdown backticks, matching this structure:
-{{"patient_name":"...","patient_dob":"...","patient_mrn":"...","ordering_provider":"...","collection_date":"YYYY-MM-DD","report_date":"YYYY-MM-DD","report_status":"Final","lab_results":[{{"test_name":"...","value":"...","unit":"...","reference_range":"...","abnormal_flag":null,"collection_date":"YYYY-MM-DD","source_citation":{{"source_type":"lab_pdf","source_id":"{filename}","page_or_section":"...","field_or_chunk_id":"...","quote_or_value":"..."}}}}],"source_document":"{filename}","extraction_confidence":0.95}}"""
+{{"patient_name":"...","patient_dob":"...","patient_mrn":"...","ordering_provider":"...","collection_date":"YYYY-MM-DD","report_date":"YYYY-MM-DD","report_status":"Final","lab_results":[{{"test_name":"...","value":"...","unit":"...","reference_range":"...","abnormal_flag":null,"collection_date":"YYYY-MM-DD","source_citation":{{"source_type":"lab_pdf","source_id":"{filename}","page_or_section":"...","field_or_chunk_id":"...","quote_or_value":"..."}}}}],"interpretive_comments":"...","source_document":"{filename}","extraction_confidence":0.95}}"""
 
     elif doc_type == "intake_form":
         return f"""Extract ALL information from this patient intake form into structured JSON.
 
-Extract demographics (patient_name, patient_dob, patient_age, patient_sex, patient_phone, patient_address, emergency_contact, insurance), chief_concern, current_medications (medication_name, dose, frequency, purpose), allergies (allergen, reaction), family_history (relation, conditions, status), social_history, review_of_systems, form_date.
+Extract demographics (patient_name, patient_dob, patient_age, patient_sex, patient_phone, patient_address, emergency_contact, insurance), chief_concern, current_medications (medication_name, dose, frequency, purpose), allergies (allergen, reaction), family_history (relation, conditions, status), social_history, past_medical_history (list of condition names from problem list / past medical history section), surgical_history (list of surgeries with dates if present), treating_physicians (free-text listing PCP and specialists with their roles), review_of_systems, form_date.
 
 For every medication, allergy, and family history entry, include a source_citation with:
 - source_type: "intake_form"
