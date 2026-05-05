@@ -1,13 +1,13 @@
 {
   "_comment": "Per-category pass-count baseline. eval_clinical_graph.py exits 1 if any category drops below these counts, so CI fails on meaningful regression.",
   "summary": {
-    "passed": 50,
-    "total": 50
+    "passed": 51,
+    "total": 51
   },
   "by_category": {
     "extraction": 10,
     "retrieval": 10,
-    "citation": 10,
+    "citation": 11,
     "refusal": 10,
     "missing_data": 10
   }

@@ -1,14 +1,29 @@
-"""Minimal LangGraph supervisor with two workers.
+"""Minimal LangGraph supervisor with three workers.
 
 Graph:
 
-    START → supervisor ──┬──→ intake_extractor ──→ supervisor (loops)
+    START → supervisor ──┬──→ intake_extractor   ──→ supervisor (loops)
                          ├──→ evidence_retriever ──→ supervisor (loops)
+                         ├──→ chart_lookup       ──→ supervisor (loops)
                          └──→ END  (when supervisor decides the answer is ready)
 
 The supervisor inspects accumulated state on every visit and decides the
 next handoff. Workers do their job and return to the supervisor — they do
 not decide what runs next, and they do not produce the final answer.
+
+Data-store boundary (DO NOT VIOLATE):
+    Patient-derived data (intake observations, lab results, conditions,
+    medications, encounters, etc.) lives in OpenEMR's relational tables
+    (which OpenEMR exposes as FHIR resources). The chart_lookup worker
+    reads patient data directly from those tables.
+
+    The vector DB (ChromaDB, populated by evidence_retriever) holds ONLY
+    the clinical-guideline corpus under agent/guidelines/*.md. It must
+    never index or embed patient-derived text.
+
+    The legacy `rag.py` module chunks patient encounter notes into a
+    vector DB; it is intentionally NOT imported anywhere in this graph
+    so that the boundary above is preserved.
 
 Run:
     python3 clinical_graph.py

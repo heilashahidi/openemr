@@ -252,7 +252,44 @@ CITATION_CASES = [
              _row_count("SELECT COUNT(*) FROM derived_fact_citations WHERE document_id IS NULL OR document_id=0;") == 0,
              "all citations must reference a document",
          )),
+    # Data-store boundary: patient-derived data must live in OpenEMR's
+    # FHIR-exposed tables, not in any vector DB. The W2 graph's only
+    # ChromaDB collection should be `clinical_guidelines`, and the legacy
+    # `rag.py` (which chunks encounter notes into chroma) must not be in
+    # the import graph of clinical_graph.
+    Case("C-11", "citation",
+         "Vector DB holds guidelines only; rag.py not imported by W2 graph",
+         lambda: (
+             (
+                 # Walk clinical_graph's transitive import set; rag must not appear.
+                 (lambda: (
+                     not _w2_imports_rag(),
+                     "rag.py present in W2 import graph" if _w2_imports_rag() else "boundary clean",
+                 ))()[0]
+                 and _vector_db_has_only_guidelines()
+             ),
+             "patient data must NOT be in the vector DB",
+         )),
 ]
+
+
+def _w2_imports_rag() -> bool:
+    import importlib, sys
+    if "clinical_graph" in sys.modules:
+        del sys.modules["clinical_graph"]
+    importlib.import_module("clinical_graph")
+    return any(name == "rag" or name.endswith(".rag") for name in sys.modules)
+
+
+def _vector_db_has_only_guidelines() -> bool:
+    """The only ChromaDB collection touched by W2 must be `clinical_guidelines`."""
+    from evidence_retriever import _client, COLLECTION_NAME, index_guidelines
+    index_guidelines()
+    names = [c.name for c in _client.list_collections()]
+    if COLLECTION_NAME not in names:
+        return False
+    forbidden = [n for n in names if n != COLLECTION_NAME]
+    return len(forbidden) == 0
 
 
 # ── Refusal cases (10) ─────────────────────────────────────────────────────
