@@ -34,6 +34,7 @@ if os.path.exists(_env):
 
 from document_extractor import extract_document
 from evidence_retriever import index_guidelines, search_evidence
+from ingest_to_openemr import run_sql
 
 MODEL = "claude-sonnet-4-5"
 _client = Anthropic()
@@ -48,10 +49,12 @@ def _append(left: list, right: list) -> list:
 class GraphState(TypedDict, total=False):
     """Shared state. `handoffs` is append-only so the trace is auditable."""
     query: str                             # The clinician question
+    patient_id: Optional[int]              # OpenEMR pid for chart lookup
     file_path: Optional[str]               # Document path, if one was attached
     doc_type: Optional[str]                # 'intake_form' or 'lab_pdf'
     extraction: Optional[dict]             # Result from intake_extractor
     evidence: Optional[list]               # Result from evidence_retriever
+    chart: Optional[dict]                  # Result from chart_lookup
     final_answer: Optional[str]            # Filled when supervisor decides we're done
     handoffs: Annotated[list, _append]     # Audit trail of handoff decisions
     next: Optional[str]                    # Supervisor's next-step decision
@@ -59,7 +62,7 @@ class GraphState(TypedDict, total=False):
 
 # ── Supervisor ─────────────────────────────────────────────────────────────
 
-_SUPERVISOR_SYSTEM = """You coordinate two clinical workers:
+_SUPERVISOR_SYSTEM = """You coordinate three clinical workers:
 
 1. intake_extractor — extracts structured data from an attached patient
    document (intake form or lab PDF). Only useful when a `file_path` is
@@ -67,17 +70,24 @@ _SUPERVISOR_SYSTEM = """You coordinate two clinical workers:
 2. evidence_retriever — searches an indexed clinical-guideline corpus and
    returns relevant snippets for a query. Useful when the answer depends on
    guideline-backed reasoning.
+3. chart_lookup — pulls the patient's stored chart data from OpenEMR
+   (medications, allergies, conditions, labs, family/social history,
+   encounters) along with source-document citations for every fact. Only
+   useful when a `patient_id` is in state and `chart` has not yet been
+   filled. Required whenever the query asks about an existing patient's
+   record (their meds, problems, prior labs, etc.).
 
 Decide the next step. Respond with strict JSON:
-  {"next": "intake_extractor" | "evidence_retriever" | "finish",
+  {"next": "intake_extractor" | "evidence_retriever" | "chart_lookup" | "finish",
    "reason": "<one sentence explaining the choice>"}
 
 Rules:
 - If a file is attached and not yet extracted, route to intake_extractor.
-- If the query asks for guideline-backed reasoning and no evidence has been
+- If a patient_id is present and the query references the patient's own
+  data and chart has not been retrieved yet, route to chart_lookup.
+- If the query needs guideline-backed reasoning and no evidence has been
   retrieved yet, route to evidence_retriever.
-- Once you have all the information needed to answer the query, choose
-  "finish".
+- Once you have all the information needed, choose "finish".
 - Never call the same worker twice if its output is already in state.
 
 Do NOT write the final answer here — that is a separate step that will see
@@ -85,27 +95,36 @@ the full unredacted state.
 """
 
 _ANSWER_SYSTEM = """You are a clinical co-pilot writing the final answer to a
-clinician's question. You will be given:
+clinician's question. You will be given some or all of:
 - the question
 - the FULL extraction from any attached document (use exact values; do not
   invent numbers, dates, names, or thresholds — every clinical value in your
   answer must appear verbatim in the extraction)
+- the FULL chart for an existing patient — medications, allergies,
+  conditions, labs, history — each row tagged with its source document.
+  When you mention a patient-specific fact, append the source citation in
+  the form (source: <document>, "<quote>"). Do not state any patient-
+  specific value that lacks a citation.
 - the FULL retrieved guideline snippets (cite them when you reason from them)
 
-If a value is not in the extraction, say so explicitly rather than
+If a value is not in the chart or extraction, say so explicitly rather than
 estimating. Be concise and clinically useful.
 """
 
 
 def _state_summary(state: GraphState) -> str:
     parts = [f"query: {state.get('query')!r}"]
+    if state.get("patient_id"):
+        parts.append(f"patient_id: {state['patient_id']}")
     if state.get("file_path"):
         parts.append(f"file_path: {state['file_path']!r} (doc_type={state.get('doc_type')!r})")
     parts.append(f"extraction_done: {state.get('extraction') is not None}")
     parts.append(f"evidence_done: {state.get('evidence') is not None}")
+    parts.append(f"chart_done: {state.get('chart') is not None}")
     if state.get("extraction"):
-        # Compact preview so the supervisor can reason about the content.
         parts.append(f"extraction_preview: {json.dumps(state['extraction'])[:600]}")
+    if state.get("chart"):
+        parts.append(f"chart_preview: {json.dumps(state['chart'])[:600]}")
     if state.get("evidence"):
         snips = [e.get("text", "")[:160] for e in state["evidence"][:3]]
         parts.append(f"evidence_preview: {snips}")
@@ -123,6 +142,9 @@ def _parse_json(raw: str) -> dict:
 def _synthesize_answer(state: GraphState) -> str:
     """Second call: write the final answer from the FULL state, not the summary."""
     parts = [f"Question: {state.get('query')}"]
+    if state.get("chart"):
+        parts.append("Patient chart (with source citations):\n" +
+                     json.dumps(state["chart"], indent=2, default=str))
     if state.get("extraction"):
         parts.append("Extraction (full):\n" + json.dumps(state["extraction"], indent=2))
     if state.get("evidence"):
@@ -177,6 +199,8 @@ def _route_from_supervisor(state: GraphState) -> str:
         return "intake_extractor"
     if nxt == "evidence_retriever":
         return "evidence_retriever"
+    if nxt == "chart_lookup":
+        return "chart_lookup"
     return END
 
 
@@ -216,6 +240,173 @@ def evidence_retriever(state: GraphState) -> GraphState:
     }
 
 
+# ── chart_lookup helpers ──
+
+def _rows(query: str) -> list[list[str]]:
+    """Run a SELECT and return rows as list[list[str]] (header stripped).
+
+    `run_sql` strips trailing whitespace, which can drop a trailing tab when
+    the last column is NULL/empty. We pad every data row to the header's
+    column count so callers can index by position safely.
+    """
+    out = run_sql(query) or ""
+    lines = out.split("\n")
+    if not lines:
+        return []
+    header = lines[0].split("\t") if lines else []
+    n_cols = len(header)
+    result = []
+    for line in lines[1:]:
+        if not line:
+            continue
+        cells = line.split("\t")
+        if len(cells) < n_cols:
+            cells = cells + [""] * (n_cols - len(cells))
+        result.append(cells)
+    return result
+
+
+def _cited_rows(table: str, fields: str, where: str, pid_col: str = None) -> list[dict]:
+    """Run a SELECT joined to derived_fact_citations and return one dict per row.
+
+    `fields` is the SELECT list for the target table (no joins). The query is
+    auto-joined to derived_fact_citations + documents to attach provenance.
+    """
+    sql = (
+        f"SELECT {fields}, d.name AS source_doc, c.quote_or_value AS cited_quote "
+        f"FROM {table} t "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='{table}' AND c.target_id=t.id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE {where};"
+    )
+    return _rows(sql)
+
+
+def chart_lookup(state: GraphState) -> GraphState:
+    """Pull the patient's stored chart with citations for every fact."""
+    pid = state.get("patient_id")
+    if not pid:
+        return {
+            "chart": {"error": "no patient_id in state"},
+            "handoffs": [{"from": "chart_lookup", "to": "supervisor",
+                          "reason": "no patient_id"}],
+        }
+
+    chart: dict = {"patient_id": pid}
+
+    # Demographics (no per-row citation since the row is the patient itself)
+    pd_rows = _rows(
+        f"SELECT pid, fname, lname, DOB, sex, phone_home, street, city, state, postal_code "
+        f"FROM patient_data WHERE pid={pid};"
+    )
+    if pd_rows:
+        r = pd_rows[0]
+        chart["patient"] = {
+            "pid": r[0], "fname": r[1], "lname": r[2], "dob": r[3], "sex": r[4],
+            "phone": r[5],
+            "address": ", ".join(p for p in [r[6], r[7], f"{r[8]} {r[9]}".strip()] if p),
+        }
+
+    def collect(rows, field_names, source_idx_offset=2):
+        """Map raw rows → dicts with a `source` block at the end."""
+        out = []
+        for r in rows:
+            d = dict(zip(field_names, r))
+            doc = r[-2] if len(r) >= 2 else ""
+            quote = r[-1] if len(r) >= 1 else ""
+            d["source"] = {"document": doc, "quote": quote}
+            out.append(d)
+        return out
+
+    # Medications
+    rows = _rows(
+        f"SELECT t.id, t.drug, t.dosage, d.name, c.quote_or_value "
+        f"FROM prescriptions t "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='prescriptions' AND c.target_id=t.id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE t.patient_id={pid} AND t.active=1;"
+    )
+    chart["medications"] = collect(rows, ["id", "drug", "dosage"])
+
+    # Allergies, problems, surgeries (all in `lists`, distinguished by type)
+    for kind, type_name in [("allergies", "allergy"),
+                            ("conditions", "medical_problem"),
+                            ("surgeries", "surgery")]:
+        rows = _rows(
+            f"SELECT t.id, t.title, d.name, c.quote_or_value "
+            f"FROM lists t "
+            f"LEFT JOIN derived_fact_citations c ON c.target_table='lists' AND c.target_id=t.id "
+            f"LEFT JOIN documents d ON d.id=c.document_id "
+            f"WHERE t.pid={pid} AND t.type='{type_name}' AND t.activity=1;"
+        )
+        chart[kind] = collect(rows, ["id", "title"])
+
+    # Family + social history (single history_data row)
+    rows = _rows(
+        f"SELECT t.id, COALESCE(t.history_father,''), COALESCE(t.history_mother,''), "
+        f"COALESCE(t.history_siblings,''), COALESCE(t.tobacco,''), COALESCE(t.alcohol,''), "
+        f"COALESCE(t.exercise_patterns,''), COALESCE(t.additional_history,''), "
+        f"d.name, c.quote_or_value "
+        f"FROM history_data t "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='history_data' AND c.target_id=t.id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE t.pid={pid} LIMIT 1;"
+    )
+    if rows:
+        r = rows[0]
+        chart["history"] = {
+            "father": r[1], "mother": r[2], "siblings": r[3],
+            "tobacco": r[4], "alcohol": r[5], "exercise": r[6],
+            "additional": r[7],
+            "source": {"document": r[8], "quote": r[9]},
+        }
+
+    # Encounters with chief concern citation
+    rows = _rows(
+        f"SELECT t.id, t.encounter, t.date, LEFT(t.reason,400), d.name, c.quote_or_value "
+        f"FROM form_encounter t "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='form_encounter' AND c.target_id=t.id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE t.pid={pid} ORDER BY t.date DESC;"
+    )
+    chart["encounters"] = collect(rows, ["id", "encounter", "date", "reason"])
+
+    # Lab results, joined back through report → order → patient
+    rows = _rows(
+        f"SELECT pres.procedure_result_id, pres.result_text, pres.result, pres.units, "
+        f"pres.`range`, COALESCE(NULLIF(pres.abnormal,''),''), d.name, c.quote_or_value "
+        f"FROM procedure_result pres "
+        f"JOIN procedure_report rep ON rep.procedure_report_id=pres.procedure_report_id "
+        f"JOIN procedure_order po ON po.procedure_order_id=rep.procedure_order_id "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='procedure_result' AND c.target_id=pres.procedure_result_id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE po.patient_id={pid};"
+    )
+    chart["labs"] = collect(rows, ["id", "test", "value", "units", "range", "flag"])
+
+    # Lab interpretations (procedure_report.report_notes)
+    rows = _rows(
+        f"SELECT rep.procedure_report_id, LEFT(rep.report_notes,800), d.name, c.quote_or_value "
+        f"FROM procedure_report rep "
+        f"JOIN procedure_order po ON po.procedure_order_id=rep.procedure_order_id "
+        f"LEFT JOIN derived_fact_citations c ON c.target_table='procedure_report' AND c.target_id=rep.procedure_report_id "
+        f"LEFT JOIN documents d ON d.id=c.document_id "
+        f"WHERE po.patient_id={pid};"
+    )
+    chart["lab_interpretations"] = collect(rows, ["id", "notes"])
+
+    counts = {k: len(v) if isinstance(v, list) else 1
+              for k, v in chart.items() if k != "patient_id"}
+    return {
+        "chart": chart,
+        "handoffs": [{
+            "from": "chart_lookup",
+            "to": "supervisor",
+            "reason": f"retrieved chart for pid={pid}: {counts}",
+        }],
+    }
+
+
 # ── Build & expose ─────────────────────────────────────────────────────────
 
 def build_graph():
@@ -223,16 +414,23 @@ def build_graph():
     g.add_node("supervisor", supervisor)
     g.add_node("intake_extractor", intake_extractor)
     g.add_node("evidence_retriever", evidence_retriever)
+    g.add_node("chart_lookup", chart_lookup)
 
     g.add_edge(START, "supervisor")
     g.add_conditional_edges(
         "supervisor",
         _route_from_supervisor,
-        {"intake_extractor": "intake_extractor", "evidence_retriever": "evidence_retriever", END: END},
+        {
+            "intake_extractor": "intake_extractor",
+            "evidence_retriever": "evidence_retriever",
+            "chart_lookup": "chart_lookup",
+            END: END,
+        },
     )
     # Workers always hand control back to the supervisor.
     g.add_edge("intake_extractor", "supervisor")
     g.add_edge("evidence_retriever", "supervisor")
+    g.add_edge("chart_lookup", "supervisor")
     return g.compile()
 
 
@@ -241,12 +439,14 @@ GRAPH = build_graph()
 index_guidelines()
 
 
-def run(query: str, file_path: str = "", doc_type: str = "") -> dict:
+def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0) -> dict:
     """Convenience runner. Returns the terminal state."""
     initial: GraphState = {"query": query, "handoffs": []}
     if file_path:
         initial["file_path"] = file_path
         initial["doc_type"] = doc_type or "intake_form"
+    if patient_id:
+        initial["patient_id"] = patient_id
     return GRAPH.invoke(initial)
 
 
