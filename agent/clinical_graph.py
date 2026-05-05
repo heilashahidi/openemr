@@ -70,7 +70,6 @@ _SUPERVISOR_SYSTEM = """You coordinate two clinical workers:
 
 Decide the next step. Respond with strict JSON:
   {"next": "intake_extractor" | "evidence_retriever" | "finish",
-   "answer": "<final answer if next == 'finish', else empty>",
    "reason": "<one sentence explaining the choice>"}
 
 Rules:
@@ -78,8 +77,23 @@ Rules:
 - If the query asks for guideline-backed reasoning and no evidence has been
   retrieved yet, route to evidence_retriever.
 - Once you have all the information needed to answer the query, choose
-  "finish" and write the answer in `answer` using the gathered context.
+  "finish".
 - Never call the same worker twice if its output is already in state.
+
+Do NOT write the final answer here — that is a separate step that will see
+the full unredacted state.
+"""
+
+_ANSWER_SYSTEM = """You are a clinical co-pilot writing the final answer to a
+clinician's question. You will be given:
+- the question
+- the FULL extraction from any attached document (use exact values; do not
+  invent numbers, dates, names, or thresholds — every clinical value in your
+  answer must appear verbatim in the extraction)
+- the FULL retrieved guideline snippets (cite them when you reason from them)
+
+If a value is not in the extraction, say so explicitly rather than
+estimating. Be concise and clinically useful.
 """
 
 
@@ -98,20 +112,51 @@ def _state_summary(state: GraphState) -> str:
     return "\n".join(parts)
 
 
-def supervisor(state: GraphState) -> GraphState:
-    """Inspect state, ask the model what to do next, log the handoff."""
-    resp = _client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=_SUPERVISOR_SYSTEM,
-        messages=[{"role": "user", "content": _state_summary(state)}],
-    )
-    raw = resp.content[0].text.strip()
-    # Strip any accidental code fences before parsing.
+def _parse_json(raw: str) -> dict:
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw
-    decision = json.loads(raw)
+    return json.loads(raw)
+
+
+def _synthesize_answer(state: GraphState) -> str:
+    """Second call: write the final answer from the FULL state, not the summary."""
+    parts = [f"Question: {state.get('query')}"]
+    if state.get("extraction"):
+        parts.append("Extraction (full):\n" + json.dumps(state["extraction"], indent=2))
+    if state.get("evidence"):
+        def _label(e):
+            src = e.get("source") or {}
+            return f"{src.get('file','?')} § {src.get('section','?')}"
+        ev = "\n\n".join(
+            f"[{i+1}] ({_label(e)})\n{e.get('text','')}"
+            for i, e in enumerate(state["evidence"])
+        )
+        parts.append("Evidence snippets (full):\n" + ev)
+    resp = _client.messages.create(
+        model=MODEL,
+        max_tokens=2048,
+        system=_ANSWER_SYSTEM,
+        messages=[{"role": "user", "content": "\n\n".join(parts)}],
+    )
+    return resp.content[0].text.strip()
+
+
+def supervisor(state: GraphState) -> GraphState:
+    """Inspect state, ask the model what to do next, log the handoff.
+
+    On a `finish` decision, run a separate synthesis call that sees the full
+    unredacted state — keeps routing prompts cheap while ensuring the final
+    answer never has to invent values from a truncated preview.
+    """
+    resp = _client.messages.create(
+        model=MODEL,
+        max_tokens=512,
+        system=_SUPERVISOR_SYSTEM,
+        messages=[{"role": "user", "content": _state_summary(state)}],
+    )
+    decision = _parse_json(resp.content[0].text)
 
     update: GraphState = {
         "next": decision["next"],
@@ -122,7 +167,7 @@ def supervisor(state: GraphState) -> GraphState:
         }],
     }
     if decision["next"] == "finish":
-        update["final_answer"] = decision.get("answer", "")
+        update["final_answer"] = _synthesize_answer(state)
     return update
 
 
