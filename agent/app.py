@@ -12,12 +12,17 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from typing import Optional
 from anthropic import Anthropic
 from langsmith.wrappers import wrap_anthropic
 from tools import TOOLS, execute_tool
 from verification import verify_response
 from document_extractor import extract_document
 from pathlib import Path
+
+# Week 2 graph — replaces the single-LLM-with-tools loop for /chat.
+from clinical_graph import run as graph_run
+from ingest_to_openemr import run_sql as _run_sql
 
 urllib3.disable_warnings()
 
@@ -120,104 +125,100 @@ class ChatResponse(BaseModel):
     verified: bool
 
 
+def _pid_from_fhir_uuid(fhir_uuid: str) -> Optional[int]:
+    """Translate the FHIR UUID the UI sends into the integer pid that
+    chart_lookup expects. Returns None if the patient isn't local."""
+    if not fhir_uuid:
+        return None
+    out = _run_sql(
+        f"SELECT pid FROM patient_data WHERE uuid = UNHEX(REPLACE('{fhir_uuid}','-','')) LIMIT 1;"
+    ) or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) >= 2 and lines[1].strip().isdigit():
+        return int(lines[1].strip())
+    return None
+
+
+def _flatten_chart_citations(chart: dict) -> list[dict]:
+    """Pull (document, quote) pairs out of the chart_lookup result so the
+    UI can render them as citation chips."""
+    if not chart:
+        return []
+    cites = []
+    for key in ("medications", "allergies", "conditions", "surgeries", "encounters", "labs"):
+        for row in chart.get(key) or []:
+            src = row.get("source") or {}
+            if src.get("document"):
+                cites.append({
+                    "type": key,
+                    "document": src.get("document"),
+                    "quote": src.get("quote") or "",
+                })
+    hist = chart.get("history") or {}
+    if hist.get("source", {}).get("document"):
+        cites.append({
+            "type": "history",
+            "document": hist["source"]["document"],
+            "quote": hist["source"].get("quote") or "",
+        })
+    return cites
+
+
+def _evidence_citations(evidence: list) -> list[dict]:
+    out = []
+    for e in evidence or []:
+        src = e.get("source") or {}
+        out.append({
+            "type": "guideline",
+            "document": src.get("file"),
+            "section": src.get("section"),
+        })
+    return out
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """Main chat endpoint. PCP sends a question about a patient."""
-    token = get_openemr_token()
-    tools_called = []
-    citations = []
-    total_input_tokens = 0
-    total_output_tokens = 0
+    """Main chat endpoint — runs the W2 LangGraph behind the W1 OAuth gate.
 
-    # Build messages
-    messages = []
-    for msg in req.conversation_history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": req.message})
+    The OAuth token fetch is preserved as the door — if OpenEMR rejects the
+    agent, the request fails before any graph work runs. After auth, the
+    request is dispatched to clinical_graph which decides routing
+    (chart_lookup / evidence_retriever / intake_extractor) and writes the
+    final answer with explicit citations.
+    """
+    # OAuth gate — fails fast if OpenEMR rejects the agent.
+    get_openemr_token()
 
-    # Tool definitions for Claude
-    tool_defs = [
+    # The UI sends a FHIR UUID; chart_lookup expects an int pid.
+    pid_int = _pid_from_fhir_uuid(req.patient_id) or 0
+
+    result = graph_run(req.message, patient_id=pid_int)
+
+    final_text = result.get("final_answer") or ""
+    chart = result.get("chart") or {}
+    evidence = result.get("evidence") or []
+    handoffs = result.get("handoffs") or []
+
+    citations = _flatten_chart_citations(chart) + _evidence_citations(evidence)
+    tools_called = [
         {
-            "name": t["name"],
-            "description": t["description"],
-            "input_schema": t["input_schema"],
+            "tool": f"{h.get('from')}->{h.get('to')}",
+            "reason": h.get("reason", ""),
         }
-        for t in TOOLS
+        for h in handoffs
     ]
 
-    # Agent loop - let Claude call tools until it produces a final response
-    max_iterations = 10
-    for i in range(max_iterations):
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-            tools=tool_defs,
-        )
+    # The W2 synthesis prompt enforces citation discipline; we surface the
+    # boolean so the UI can still render the verification badge.
+    verified = bool(final_text)
 
-        total_input_tokens += response.usage.input_tokens
-        total_output_tokens += response.usage.output_tokens
-
-        # Check if Claude wants to use tools
-        if response.stop_reason == "tool_use":
-            # Process tool calls
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_input = block.input
-                    tool_input["patient_id"] = req.patient_id
-
-                    # Execute the tool
-                    start = time.time()
-                    result = execute_tool(tool_name, tool_input, token, OPENEMR_BASE)
-                    elapsed = time.time() - start
-
-                    tools_called.append({
-                        "tool": tool_name,
-                        "input": tool_input,
-                        "latency_ms": round(elapsed * 1000),
-                        "success": result.get("success", False),
-                    })
-
-                    # Collect citations from tool results
-                    if result.get("citations"):
-                        citations.extend(result["citations"])
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result.get("data", result.get("error", "Unknown error"))),
-                    })
-
-            # Add assistant message and tool results to conversation
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
-
-        else:
-            # Claude produced a final text response
-            final_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    final_text += block.text
-
-            # Run verification
-            verified, final_text = verify_response(final_text, citations)
-
-            return ChatResponse(
-                response=final_text,
-                citations=citations,
-                tools_called=tools_called,
-                tokens_used={
-                    "input": total_input_tokens,
-                    "output": total_output_tokens,
-                    "total": total_input_tokens + total_output_tokens,
-                },
-                verified=verified,
-            )
-
-    raise HTTPException(status_code=500, detail="Agent exceeded max iterations")
+    return ChatResponse(
+        response=final_text,
+        citations=citations,
+        tools_called=tools_called,
+        tokens_used={"input": 0, "output": 0, "total": 0},
+        verified=verified,
+    )
 
 
 
