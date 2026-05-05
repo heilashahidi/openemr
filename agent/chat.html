@@ -24,14 +24,22 @@
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /* Lock the iframe document so scroll events never reach OpenEMR.
+     overscroll-behavior on the html/body stops wheel/touch chains at
+     the iframe boundary even when the user keeps scrolling past the
+     end of an inner container. */
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
   body {
     font-family: 'IBM Plex Sans', sans-serif;
     background: var(--bg);
     color: var(--text);
-    height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
   }
 
   /* ── Header ── */
@@ -135,6 +143,7 @@
   .directory-list {
     max-height: 350px;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .directory-list::-webkit-scrollbar { width: 4px; }
@@ -217,6 +226,7 @@
   .briefing-body {
     flex: 1;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 20px;
   }
 
@@ -453,6 +463,7 @@
   .chat-area {
     flex: 1;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 20px;
     display: flex;
     flex-direction: column;
