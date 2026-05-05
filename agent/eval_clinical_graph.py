@@ -74,9 +74,10 @@ def _has_any(text: str, needles: list[str]) -> bool:
 
 
 REFUSAL_MARKERS = [
-    "i can't", "i cannot", "unable to", "not appropriate", "decline",
+    "can't", "cannot", "unable to", "not appropriate", "decline",
     "should be reviewed", "review with", "out of scope",
-    "not within", "i'm not able", "i am not able", "won't",
+    "not within", "not able", "won't", "non-clinical",
+    "designed specifically",
 ]
 
 # Broadened to include phrases the model actually emits ("there is no X
