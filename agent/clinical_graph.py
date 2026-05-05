@@ -127,10 +127,16 @@ clinician's question. You will be given some or all of:
   invent numbers, dates, names, or thresholds — every clinical value in your
   answer must appear verbatim in the extraction)
 - the FULL chart for an existing patient — medications, allergies,
-  conditions, labs, history — each row tagged with its source document.
-  When you mention a patient-specific fact, append the source citation in
-  the form (source: <document>, "<quote>"). Do not state any patient-
-  specific value that lacks a citation.
+  conditions, labs, history. Each row may carry a `source` block tagging
+  it to the source document it was extracted from. CITATION RULE:
+  - If a chart row's `source.document` is non-empty, append the citation
+    to that fact in the form (source: <document>, "<quote>").
+  - If a chart row has no source (legacy/seeded data that exists in the
+    chart but was not extracted from a document), STILL state the fact —
+    the chart itself is the source of truth — but do NOT invent a
+    document name. Just state the fact plainly.
+  - Never invent a `(source: ...)` annotation. Never claim a citation
+    where the source field is empty or "NULL".
 - the FULL retrieved guideline snippets (cite them when you reason from them)
 
 REFUSALS — you must decline these and the answer must NOT contain a specific
@@ -314,7 +320,10 @@ def _rows(query: str) -> list[list[str]]:
 
     `run_sql` strips trailing whitespace, which can drop a trailing tab when
     the last column is NULL/empty. We pad every data row to the header's
-    column count so callers can index by position safely.
+    column count so callers can index by position safely. We also normalize
+    the literal string "NULL" (mariadb's tab-output sentinel for SQL NULL)
+    to empty string — otherwise downstream truthiness checks treat it as
+    a real value and fake citations get attributed to a "NULL" document.
     """
     out = run_sql(query) or ""
     lines = out.split("\n")
@@ -329,6 +338,7 @@ def _rows(query: str) -> list[list[str]]:
         cells = line.split("\t")
         if len(cells) < n_cols:
             cells = cells + [""] * (n_cols - len(cells))
+        cells = ["" if c == "NULL" else c for c in cells]
         result.append(cells)
     return result
 
