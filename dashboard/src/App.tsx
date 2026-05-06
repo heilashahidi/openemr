@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { AllergiesCard } from "./widgets/Allergies";
 import { ConditionsCard } from "./widgets/Conditions";
 import { EncountersCard } from "./widgets/Encounters";
+import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
 
 export function App(): JSX.Element {
@@ -49,9 +50,12 @@ export function App(): JSX.Element {
         <div className="col-md-6 col-lg-4 mb-2">
           <EncountersCard patientId={patientId} />
         </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <LabsCard patientId={patientId} />
+        </div>
         {/* Future widgets land here:
-            <div className="col-md-6 col-lg-4 mb-2"><LabsCard ... /></div>
             <div className="col-md-6 col-lg-4 mb-2"><DemographicsCard ... /></div>
+            <div className="col-md-6 col-lg-4 mb-2"><InsuranceCard ... /></div>
             ... */}
       </div>
     </div>
