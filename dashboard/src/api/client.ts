@@ -48,23 +48,24 @@ interface FetchOptions {
 /**
  * Fetch a path from OpenEMR with the bearer token attached. Throws
  * FhirError on non-2xx responses with the status + parsed body.
+ *
+ * Auth: when the dashboard is embedded (served by the agent at
+ * /dashboard), the agent's /apis/* proxy attaches the bearer token
+ * server-side and the client doesn't need one. When developed
+ * standalone, the client falls back to a token in URL or sessionStorage.
  */
 export async function fetchJson<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const token = getToken();
-  if (!token) {
-    throw new FhirError("No OpenEMR access token. Pass via ?access_token=...", 401);
-  }
   const flavor = opts.flavor ?? "fhir";
   const prefix = flavor === "rest" ? "/apis/default/api" : "/apis/default/fhir";
   const url = `${BASE}${prefix}${path}`;
 
-  const resp = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/fhir+json, application/json",
-    },
-    signal: opts.signal,
-  });
+  const headers: Record<string, string> = {
+    Accept: "application/fhir+json, application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const resp = await fetch(url, { headers, signal: opts.signal });
 
   if (!resp.ok) {
     let body: unknown;

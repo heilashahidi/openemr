@@ -6,6 +6,11 @@ import react from "@vitejs/plugin-react";
 // production the SPA is served from the same host as OpenEMR (or behind a
 // reverse proxy) so this config only matters during `npm run dev`.
 export default defineConfig({
+  // When the dashboard is served by the agent at /dashboard/* (the
+  // production embed path used by demographics.php), Vite needs to emit
+  // asset URLs prefixed with /dashboard/. In dev (`npm run dev`) we keep
+  // the root base so localhost:5173 still works without rewriting.
+  base: process.env.VITE_DASHBOARD_BASE ?? "/dashboard/",
   plugins: [react()],
   server: {
     port: 5173,

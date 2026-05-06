@@ -8,9 +8,10 @@ import json
 import time
 import requests
 import urllib3
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 from anthropic import Anthropic
@@ -332,3 +333,53 @@ async def document_view(document_id: int):
                     matching what's stored in derived_fact_citations.bbox_json
     """
     return FileResponse(Path(__file__).parent / "doc_viewer.html", media_type="text/html")
+
+
+# ── Patient dashboard (React) — embedded into OpenEMR's demographics page ──
+#
+# The dashboard is a separate Vite + React + TS SPA under ../dashboard. We
+# serve its production build from /dashboard so OpenEMR can iframe it from
+# the same origin as the AI co-pilot. /apis/* is proxied through the agent
+# (with the bearer token attached server-side) so the dashboard never needs
+# to handle auth and there's no CORS handshake.
+
+DASHBOARD_DIST = Path(__file__).parent.parent / "dashboard" / "dist"
+if DASHBOARD_DIST.is_dir():
+    app.mount(
+        "/dashboard",
+        StaticFiles(directory=str(DASHBOARD_DIST), html=True),
+        name="dashboard",
+    )
+
+
+@app.api_route("/apis/{rest_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def openemr_api_proxy(rest_path: str, request: Request):
+    """Proxy /apis/* to OpenEMR with the agent's OAuth bearer token attached.
+
+    Lets the React dashboard call e.g. /apis/default/fhir/Patient/<id> from
+    the same origin (no CORS, no client-side token plumbing). Same auth
+    surface as everything else the agent does — no new credentials.
+    """
+    token = get_openemr_token()
+    target = f"{OPENEMR_BASE}/apis/{rest_path}"
+    qs = request.url.query
+    if qs:
+        target = f"{target}?{qs}"
+
+    body = await request.body()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": request.headers.get("accept", "application/fhir+json"),
+    }
+    if request.method != "GET" and request.headers.get("content-type"):
+        headers["Content-Type"] = request.headers["content-type"]
+
+    resp = requests.request(
+        request.method,
+        target,
+        data=body if body else None,
+        headers=headers,
+        verify=False,
+    )
+    media = resp.headers.get("content-type", "application/json")
+    return Response(content=resp.content, status_code=resp.status_code, media_type=media)

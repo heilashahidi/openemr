@@ -2046,6 +2046,39 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
                     ?>
                 </div> <!-- end right column div -->
             </div> <!-- end div.main > row:first  -->
+
+            <!-- ── React Patient Dashboard (preview) ────────────────
+                 Embeds the Vite + React + TS port of the patient
+                 dashboard alongside the legacy PHP cards above. Same
+                 patient context, same Bootstrap 4.6 markup — reads
+                 from OpenEMR's existing FHIR R4 API via the agent's
+                 /apis proxy so no auth lives client-side.
+                 ────────────────────────────────────────────────── -->
+            <?php
+            $patientUuidRow = sqlQuery(
+                "SELECT LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))) AS fhir_uuid FROM patient_data WHERE pid = ?",
+                [$pid]
+            );
+            $reactFhirUuid = $patientUuidRow['fhir_uuid'] ?? '';
+            if ($reactFhirUuid) :
+                $reactDashboardUrl = 'https://agent-copilot.ngrok-free.dev/dashboard/?patient='
+                    . urlencode($reactFhirUuid) . '&v=' . time();
+                ?>
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="d-flex align-items-center mb-2">
+                            <h5 class="mb-0">React Dashboard (preview)</h5>
+                            <span class="badge badge-info ml-2">Vite + React + TS · FHIR R4</span>
+                        </div>
+                        <iframe
+                            id="react-dashboard-frame"
+                            src="<?php echo attr($reactDashboardUrl); ?>"
+                            style="width: 100%; height: 1200px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff;"
+                            title="React patient dashboard"
+                        ></iframe>
+                    </div>
+                </div>
+            <?php endif; ?>
         </div> <!-- end main content div -->
         <!-- Clinical Co-Pilot -->
     </div><!-- end container div -->
