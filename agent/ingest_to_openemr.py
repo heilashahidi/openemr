@@ -586,6 +586,7 @@ def ingest_intake_form(extraction, source_path):
     phone = escape_sql(data.get('patient_phone', ''))
     street, city, state, postal = parse_address(data.get('patient_address', ''))
     email = ''
+    mrn = escape_sql((data.get('patient_mrn') or '').strip())
 
     print(f"\n{'='*60}")
     print(f"  Ingesting: {fname} {lname} (pid={pid})")
@@ -593,14 +594,16 @@ def ingest_intake_form(extraction, source_path):
     print(f"  Chief concern: {data.get('chief_concern', 'N/A')[:80]}")
     print(f"{'='*60}")
 
-    # 1. Create patient
+    # 1. Create patient.  pubpid is OpenEMR's external public ID and the
+    # field that drives FHIR Patient.identifier — populate from the MRN
+    # printed on the intake form when present.
     sql = (
-        f"INSERT INTO patient_data (pid, fname, lname, DOB, sex, phone_home, street, city, state, postal_code) "
+        f"INSERT INTO patient_data (pid, fname, lname, DOB, sex, phone_home, street, city, state, postal_code, pubpid) "
         f"VALUES ({pid}, '{escape_sql(fname)}', '{escape_sql(lname)}', '{dob}', '{sex}', '{phone}', "
-        f"'{escape_sql(street)}', '{escape_sql(city)}', '{escape_sql(state)}', '{escape_sql(postal)}');"
+        f"'{escape_sql(street)}', '{escape_sql(city)}', '{escape_sql(state)}', '{escape_sql(postal)}', '{mrn}');"
     )
     run_sql(sql)
-    print(f"  ✅ Patient created: {fname} {lname} (pid={pid})")
+    print(f"  ✅ Patient created: {fname} {lname} (pid={pid}, MRN={mrn or '—'})")
 
     # Generate UUID
     run_sql(f"UPDATE patient_data SET uuid = UNHEX(REPLACE(UUID(), '-', '')) WHERE pid = {pid} AND uuid IS NULL;")

@@ -99,6 +99,7 @@ class IntakeFormExtraction(BaseModel):
 
     # Demographics
     patient_name: str = Field(description="Patient full name")
+    patient_mrn: Optional[str] = Field(default=None, description="Medical record number as printed on the form (e.g. 'MRN-2026-04492'). Look in the form header / top-right corner — labels like 'MRN', 'Medical Record No.', 'Patient ID'.")
     patient_dob: Optional[str] = Field(default=None, description="Date of birth")
     patient_age: Optional[int] = Field(default=None, description="Age in years")
     patient_sex: Optional[str] = Field(default=None, description="Sex (Male/Female)")
