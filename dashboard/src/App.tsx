@@ -11,6 +11,7 @@ import { AllergiesCard } from "./widgets/Allergies";
 import { ConditionsCard } from "./widgets/Conditions";
 import { DemographicsCard } from "./widgets/Demographics";
 import { EncountersCard } from "./widgets/Encounters";
+import { InsuranceCard } from "./widgets/Insurance";
 import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
 
@@ -58,9 +59,14 @@ export function App(): JSX.Element {
         <div className="col-md-6 col-lg-4 mb-2">
           <LabsCard patientId={patientId} />
         </div>
+        {/* Insurance is wider — give it a half-width column so the
+            tab/policy-details layout has room to breathe. */}
+        <div className="col-md-12 col-lg-8 mb-2">
+          <InsuranceCard patientId={patientId} />
+        </div>
         {/* Future widgets land here:
-            <div className="col-md-6 col-lg-4 mb-2"><DemographicsCard ... /></div>
-            <div className="col-md-6 col-lg-4 mb-2"><InsuranceCard ... /></div>
+            <div className="col-md-6 col-lg-4 mb-2"><VitalsCard ... /></div>
+            <div className="col-md-6 col-lg-4 mb-2"><ImmunizationsCard ... /></div>
             ... */}
       </div>
     </div>
