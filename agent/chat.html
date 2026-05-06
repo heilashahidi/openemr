@@ -460,6 +460,63 @@
     background: var(--accent-dim);
   }
 
+  /* Inline citation chip — replaces [N] markers in assistant messages.
+     Click opens the source-document panel with a bbox overlay. */
+  .cite-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 5px;
+    margin: 0 1px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    vertical-align: 1px;
+    transition: background 0.15s;
+  }
+  .cite-chip:hover { background: rgba(59, 130, 246, 0.25); }
+  .cite-chip.no-bbox { color: var(--text-dim); border-color: var(--border); background: rgba(255,255,255,0.04); }
+
+  /* Citation source panel — slides in from the right edge of the iframe. */
+  #citePanel {
+    position: fixed; top: 0; right: 0;
+    width: 0; height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+    transition: width 0.2s;
+    display: flex; flex-direction: column;
+    z-index: 50;
+  }
+  #citePanel.open { width: min(55%, 720px); }
+  #citePanelHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #citePanelTitle { font-weight: 600; font-size: 13px; color: var(--text); }
+  #citePanelClose {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 18px; cursor: pointer; padding: 0 4px;
+  }
+  #citePanelClose:hover { color: var(--text); }
+  #citePanelMeta {
+    padding: 8px 14px;
+    font-size: 11px; color: var(--text-dim);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    word-break: break-word;
+    flex-shrink: 0;
+  }
+  #citeFrame { flex: 1; width: 100%; border: none; background: var(--bg); }
+
   .chat-area {
     flex: 1;
     overflow-y: auto;
@@ -684,6 +741,16 @@
 
 </div>
 
+<!-- Citation source viewer — slides in from the right when a [N] marker is clicked. -->
+<div id="citePanel">
+  <div id="citePanelHeader">
+    <div id="citePanelTitle">Citation</div>
+    <button id="citePanelClose" onclick="closeCitation()">✕</button>
+  </div>
+  <div id="citePanelMeta"></div>
+  <iframe id="citeFrame" title="Source document with bbox overlay"></iframe>
+</div>
+
 <script>
 // Derive from the page's own origin so this works whether the iframe is
 // served from localhost (dev) or from the ngrok tunnel (deployed).
@@ -791,15 +858,20 @@ async function onPatientSelect() {
     const data = await resp.json();
     loading.classList.remove('active');
 
+    // Register this turn's claims so [N] markers in the briefing become
+    // clickable chips in the briefing cards too.
+    const localToGlobal = _registerClaims(data.claims);
+
     // Parse the response into sections
     const sections = parseBriefing(data.response);
     let html = '';
 
     for (const section of sections) {
+      const cited = _replaceCiteMarkers(section.content, localToGlobal);
       html += `
         <div class="brief-section">
           <div class="brief-section-label"><div class="dot"></div>${section.label}</div>
-          <div class="brief-card">${section.content}</div>
+          <div class="brief-card">${cited}</div>
         </div>`;
     }
 
@@ -946,7 +1018,88 @@ function sendQuick(msg) {
   sendMessage();
 }
 
-function addMessage(role, content, meta = null) {
+// Map of claim_id → claim object, populated whenever an assistant message
+// arrives. Lets click handlers look up the citation by its [N] number.
+const CLAIM_CACHE = new Map();
+let CLAIM_COUNTER = 0;
+
+function _registerClaims(claims) {
+  // Each chat turn's claims are 1-indexed within that turn. We rekey them
+  // to a turn-prefixed id so older messages remain clickable when a new
+  // turn arrives (otherwise [1] would mean different things over time).
+  CLAIM_COUNTER += 1;
+  const turn = CLAIM_COUNTER;
+  const localToGlobal = {};
+  (claims || []).forEach(c => {
+    const gid = `t${turn}c${c.id}`;
+    CLAIM_CACHE.set(gid, c);
+    localToGlobal[c.id] = gid;
+  });
+  return localToGlobal;
+}
+
+function _replaceCiteMarkers(text, localToGlobal) {
+  // [3] → <span class="cite-chip" data-cite="t1c3">3</span>
+  // Multiple stacked markers like [3][7] each become their own chip.
+  return text.replace(/\[(\d+)\]/g, (m, n) => {
+    const gid = localToGlobal[parseInt(n, 10)];
+    if (!gid) return m; // marker referencing unknown claim — leave as-is
+    const c = CLAIM_CACHE.get(gid);
+    const hasBbox = c && c.bbox && c.bbox.length > 0;
+    const cls = 'cite-chip' + (hasBbox ? '' : ' no-bbox');
+    const title = c ? `${c.source_type}: ${c.source_id}` : 'citation';
+    return `<span class="${cls}" data-cite="${gid}" title="${title.replace(/"/g,'&quot;')}" onclick="openCitation('${gid}')">${n}</span>`;
+  });
+}
+
+function openCitation(gid) {
+  const c = CLAIM_CACHE.get(gid);
+  if (!c) return;
+  const panel = document.getElementById('citePanel');
+  const titleEl = document.getElementById('citePanelTitle');
+  const metaEl = document.getElementById('citePanelMeta');
+  const frame = document.getElementById('citeFrame');
+
+  titleEl.textContent = `📄 ${c.source_id}`;
+  let metaHtml = `<strong>${c.source_type}</strong>`;
+  if (c.field_or_chunk_id) metaHtml += ` · ${c.field_or_chunk_id}`;
+  if (c.page_or_section)   metaHtml += ` · ${c.page_or_section}`;
+  if (c.quote_or_value) {
+    metaHtml += `<br><span style="color:var(--text)">"${c.quote_or_value.slice(0, 240)}"</span>`;
+  }
+  metaEl.innerHTML = metaHtml;
+
+  // Three rendering modes:
+  // 1) chart fact with PDF bbox  → /document/{id}/view?... shows highlight
+  // 2) chart fact without bbox    → still load /document/{id}/view (full page)
+  // 3) guideline (no document_id) → show the snippet text inline (about:blank)
+  if (c.document_id) {
+    const page = (c.bbox && c.bbox[0] && c.bbox[0].page) || 1;
+    const bboxParam = encodeURIComponent(JSON.stringify(c.bbox || []));
+    frame.src = `${AGENT_URL}/document/${c.document_id}/view?document_id=${c.document_id}&page=${page}&bboxes=${bboxParam}`;
+  } else {
+    // Guideline citation — render the snippet directly.
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      body { margin:0; padding:24px; font-family:-apple-system,sans-serif; background:#1a1f2e; color:#e2e8f0; }
+      .src { font-size:12px; color:#7a8599; margin-bottom:12px; }
+      .quote { font-size:14px; line-height:1.6; padding:16px; background:#0f1620; border-left:3px solid #f59e0b; border-radius:4px; }
+    </style></head><body>
+      <div class="src">${(c.source_type || 'guideline')} · ${(c.source_id || '')}${c.page_or_section ? ' § ' + c.page_or_section : ''}</div>
+      <div class="quote">${(c.quote_or_value || '').replace(/</g,'&lt;')}</div>
+    </body></html>`;
+    frame.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  }
+  panel.classList.add('open');
+}
+
+function closeCitation() {
+  const panel = document.getElementById('citePanel');
+  panel.classList.remove('open');
+  // Unload the iframe so re-opening doesn't show stale content for a moment.
+  setTimeout(() => { document.getElementById('citeFrame').src = 'about:blank'; }, 220);
+}
+
+function addMessage(role, content, meta = null, claims = null) {
   const chatArea = document.getElementById('chatArea');
   const welcome = document.getElementById('chatWelcome');
   if (welcome) welcome.remove();
@@ -954,7 +1107,10 @@ function addMessage(role, content, meta = null) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
 
-  let html = content
+  // Register this turn's claims and convert [N] markers BEFORE the other
+  // markdown replacements so the chip HTML survives intact.
+  const localToGlobal = _registerClaims(claims);
+  let html = _replaceCiteMarkers(content, localToGlobal)
     .replace(/## (.*)/g, '<h2>$1</h2>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n- /g, '\n• ')
@@ -1022,7 +1178,7 @@ async function sendMessage() {
       citations: data.citations ? data.citations.length : 0,
       tokens: data.tokens_used ? data.tokens_used.total : 0,
       verified: data.verified,
-    });
+    }, data.claims);
   } catch (err) {
     addMessage('assistant', '⚠️ Could not reach the agent.');
   }
