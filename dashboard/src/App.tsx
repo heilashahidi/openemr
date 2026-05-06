@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { AllergiesCard } from "./widgets/Allergies";
 import { ConditionsCard } from "./widgets/Conditions";
+import { DemographicsCard } from "./widgets/Demographics";
 import { EncountersCard } from "./widgets/Encounters";
 import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
@@ -38,6 +39,10 @@ export function App(): JSX.Element {
   return (
     <div className="container-fluid p-2">
       <div className="row">
+        {/* Demographics is conventionally the first card on the page. */}
+        <div className="col-md-6 col-lg-4 mb-2">
+          <DemographicsCard patientId={patientId} />
+        </div>
         <div className="col-md-6 col-lg-4 mb-2">
           <MedicationsCard patientId={patientId} />
         </div>
