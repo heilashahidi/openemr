@@ -34,7 +34,19 @@ function docCategory(d: DocumentReference): string {
 }
 
 function docHref(d: DocumentReference): string {
-  return d.content?.[0]?.attachment?.url ?? "";
+  const url = d.content?.[0]?.attachment?.url;
+  if (!url) return "";
+  // OpenEMR returns absolute URLs that point at its container's internal
+  // address (e.g. https://localhost:9300/apis/default/fhir/Binary/<id>).
+  // The browser can't reach localhost:9300 from the dashboard's origin —
+  // rewrite to path-only so the link routes through the same-origin
+  // /apis proxy on the agent (which has the bearer token attached).
+  try {
+    const u = new URL(url, window.location.href);
+    return u.pathname + u.search;
+  } catch {
+    return url;
+  }
 }
 
 export async function fetchDocuments(
