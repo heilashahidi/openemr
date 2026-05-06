@@ -10,7 +10,10 @@ import { useEffect, useState } from "react";
 import { AllergiesCard } from "./widgets/Allergies";
 import { ConditionsCard } from "./widgets/Conditions";
 import { DemographicsCard } from "./widgets/Demographics";
+import { DocumentsCard } from "./widgets/Documents";
 import { EncountersCard } from "./widgets/Encounters";
+import { FamilyHistoryCard } from "./widgets/FamilyHistory";
+import { ImmunizationsCard } from "./widgets/Immunizations";
 import { InsuranceCard } from "./widgets/Insurance";
 import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
@@ -63,15 +66,20 @@ export function App(): JSX.Element {
         <div className="col-md-6 col-lg-4 mb-2">
           <VitalsCard patientId={patientId} />
         </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <ImmunizationsCard patientId={patientId} />
+        </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <FamilyHistoryCard patientId={patientId} />
+        </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <DocumentsCard patientId={patientId} />
+        </div>
         {/* Insurance is wider — give it a half-width column so the
             tab/policy-details layout has room to breathe. */}
         <div className="col-md-12 col-lg-8 mb-2">
           <InsuranceCard patientId={patientId} />
         </div>
-        {/* Future widgets land here:
-            <div className="col-md-6 col-lg-4 mb-2"><ImmunizationsCard ... /></div>
-            <div className="col-md-6 col-lg-4 mb-2"><FamilyHistoryCard ... /></div>
-            ... */}
       </div>
     </div>
   );
