@@ -14,6 +14,7 @@ import { EncountersCard } from "./widgets/Encounters";
 import { InsuranceCard } from "./widgets/Insurance";
 import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
+import { VitalsCard } from "./widgets/Vitals";
 
 export function App(): JSX.Element {
   const [patientId, setPatientId] = useState<string>("");
@@ -59,14 +60,17 @@ export function App(): JSX.Element {
         <div className="col-md-6 col-lg-4 mb-2">
           <LabsCard patientId={patientId} />
         </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <VitalsCard patientId={patientId} />
+        </div>
         {/* Insurance is wider — give it a half-width column so the
             tab/policy-details layout has room to breathe. */}
         <div className="col-md-12 col-lg-8 mb-2">
           <InsuranceCard patientId={patientId} />
         </div>
         {/* Future widgets land here:
-            <div className="col-md-6 col-lg-4 mb-2"><VitalsCard ... /></div>
             <div className="col-md-6 col-lg-4 mb-2"><ImmunizationsCard ... /></div>
+            <div className="col-md-6 col-lg-4 mb-2"><FamilyHistoryCard ... /></div>
             ... */}
       </div>
     </div>
