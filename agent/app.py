@@ -262,8 +262,16 @@ async def health():
 
 @app.get("/ui")
 async def ui():
-    """Serve the chat iframe UI. Loaded by demographics.php in OpenEMR."""
-    return FileResponse(Path(__file__).parent / "chat.html", media_type="text/html")
+    """Serve the chat iframe UI. Loaded by demographics.php in OpenEMR.
+
+    no-store so browsers don't cache the iframe HTML — otherwise UI changes
+    don't reach the user until they hard-refresh, which they often won't.
+    """
+    return FileResponse(
+        Path(__file__).parent / "chat.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 def _resolve_document_path(document_id: int) -> Path:
