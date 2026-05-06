@@ -60,7 +60,7 @@ def get_openemr_token():
             "username": "admin",
             "password": "pass",
             "user_role": "users",
-            "scope": "openid api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Encounter.read user/Observation.read",
+            "scope": "openid api:fhir user/Patient.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Encounter.read user/Observation.read user/Coverage.read user/Immunization.read user/DocumentReference.read",
             "client_id": OPENEMR_CLIENT_ID,
             "client_secret": OPENEMR_CLIENT_SECRET,
         },
