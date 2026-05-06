@@ -1,16 +1,26 @@
 """
 Strict Pydantic schemas for document extraction.
 Week 2 requirement: lab_pdf and intake_form with source citations.
+
+Strictness — every model below sets `extra='forbid'` so the extractor
+cannot smuggle un-declared fields past validation. Any structural
+deviation from the schema fails fast at validate-time, which the eval
+suite (schema_valid bucket) exercises directly.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 from datetime import date
+
+
+_STRICT = ConfigDict(extra="forbid")
 
 
 # ── Source Citation ──
 class SourceCitation(BaseModel):
     """Machine-readable citation metadata per Week 2 spec."""
+    model_config = _STRICT
+
     source_type: str = Field(description="Type of source: 'lab_pdf' or 'intake_form'")
     source_id: str = Field(description="Document ID or filename")
     page_or_section: Optional[str] = Field(default=None, description="Page number or section name")
@@ -21,6 +31,8 @@ class SourceCitation(BaseModel):
 # ── Lab PDF Schema ──
 class LabResult(BaseModel):
     """A single lab test result extracted from a lab PDF."""
+    model_config = _STRICT
+
     test_name: str = Field(description="Name of the lab test (e.g., 'Glucose', 'HbA1c')")
     value: str = Field(description="The numeric or text result value")
     unit: str = Field(description="Unit of measurement (e.g., 'mg/dL', '%')")
@@ -32,6 +44,8 @@ class LabResult(BaseModel):
 
 class LabPDFExtraction(BaseModel):
     """Complete extraction from a lab report PDF."""
+    model_config = _STRICT
+
     patient_name: str = Field(description="Patient full name from the lab report")
     patient_dob: Optional[str] = Field(default=None, description="Patient date of birth")
     patient_mrn: Optional[str] = Field(default=None, description="Medical record number")
@@ -51,6 +65,8 @@ class LabPDFExtraction(BaseModel):
 # ── Intake Form Schema ──
 class IntakeMedication(BaseModel):
     """A medication listed on the intake form."""
+    model_config = _STRICT
+
     medication_name: str = Field(description="Name of the medication")
     dose: Optional[str] = Field(default=None, description="Dose (e.g., '200mg')")
     frequency: Optional[str] = Field(default=None, description="How often taken (e.g., 'twice daily')")
@@ -60,6 +76,8 @@ class IntakeMedication(BaseModel):
 
 class IntakeAllergy(BaseModel):
     """An allergy listed on the intake form."""
+    model_config = _STRICT
+
     allergen: str = Field(description="Substance the patient is allergic to")
     reaction: Optional[str] = Field(default=None, description="Type of reaction")
     source_citation: SourceCitation = Field(description="Citation to source")
@@ -67,6 +85,8 @@ class IntakeAllergy(BaseModel):
 
 class FamilyHistoryEntry(BaseModel):
     """A single family history entry."""
+    model_config = _STRICT
+
     relation: str = Field(description="Family member relationship (e.g., 'Mother', 'Father')")
     conditions: list[str] = Field(description="Medical conditions")
     status: Optional[str] = Field(default=None, description="Alive/deceased, age")
@@ -75,6 +95,8 @@ class FamilyHistoryEntry(BaseModel):
 
 class IntakeFormExtraction(BaseModel):
     """Complete extraction from a patient intake form."""
+    model_config = _STRICT
+
     # Demographics
     patient_name: str = Field(description="Patient full name")
     patient_dob: Optional[str] = Field(default=None, description="Date of birth")

@@ -207,11 +207,90 @@ def _dense_search(query: str, top_k: int = 10) -> list[tuple[GuidelineChunk, flo
     return scored
 
 
-def search_evidence(query: str, top_k: int = 5) -> list[dict]:
-    """
-    Hybrid search: combine BM25 keyword + dense vector retrieval, then rerank.
+def _rerank_candidates(query: str, candidates: list, top_k: int) -> list[tuple]:
+    """Re-score (query, chunk) pairs with a cross-encoder reranker.
 
-    Returns list of evidence snippets with source metadata and scores.
+    Tries Cohere Rerank first (if COHERE_API_KEY is set); falls back to a
+    local sentence-transformers cross-encoder; falls back to the input
+    order (already sorted by hybrid score) if neither is available.
+
+    `candidates` is a list of (chunk, hybrid_score, kw_score, dense_score)
+    tuples. Returns the same shape with an additional `rerank_score` field
+    spliced in, sorted by rerank_score desc, truncated to top_k.
+    """
+    # Try Cohere first.
+    cohere_key = os.getenv("COHERE_API_KEY", "").strip()
+    if cohere_key:
+        try:
+            import cohere
+            co = cohere.Client(api_key=cohere_key)
+            docs = [c[0].text for c in candidates]
+            resp = co.rerank(
+                query=query,
+                documents=docs,
+                top_n=min(top_k, len(docs)),
+                model="rerank-english-v3.0",
+            )
+            out = []
+            for r in resp.results:
+                ch, hybrid, kw, dense = candidates[r.index]
+                out.append((ch, hybrid, kw, dense, float(r.relevance_score), "cohere"))
+            return out
+        except Exception:
+            pass  # fall through to next backend
+
+    # Fall back to a local cross-encoder via sentence-transformers.
+    try:
+        from sentence_transformers import CrossEncoder
+        model = _local_reranker()
+        if model is not None:
+            pairs = [(query, c[0].text) for c in candidates]
+            scores = model.predict(pairs)
+            ranked = sorted(
+                zip(candidates, scores),
+                key=lambda x: float(x[1]),
+                reverse=True,
+            )[:top_k]
+            return [
+                (ch, h, k, d, float(s), "cross-encoder")
+                for (ch, h, k, d), s in ranked
+            ]
+    except Exception:
+        pass
+
+    # Final fallback: keep the existing hybrid-fusion order. This is what
+    # the eval suite exercises in CI (no Cohere key, no transformers).
+    return [
+        (ch, h, k, d, float(h), "hybrid-fusion")
+        for ch, h, k, d in candidates[:top_k]
+    ]
+
+
+_LOCAL_RERANKER_CACHE: list = []
+
+
+def _local_reranker():
+    """Lazy-load a local cross-encoder, cache, return None on failure."""
+    if _LOCAL_RERANKER_CACHE:
+        return _LOCAL_RERANKER_CACHE[0]
+    try:
+        from sentence_transformers import CrossEncoder
+        m = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        _LOCAL_RERANKER_CACHE.append(m)
+        return m
+    except Exception:
+        _LOCAL_RERANKER_CACHE.append(None)
+        return None
+
+
+def search_evidence(query: str, top_k: int = 5, candidate_pool: int = 20) -> list[dict]:
+    """
+    Hybrid search + reranker: BM25 keyword + dense vector candidates,
+    then a cross-encoder reranker scores each (query, chunk) pair and
+    only the top-k grounded snippets are returned.
+
+    Returns list of evidence snippets with source metadata and scores
+    (kw, dense, hybrid, rerank, backend).
     """
     # Ensure index exists
     if _collection is None or len(_chunks) == 0:
@@ -220,9 +299,9 @@ def search_evidence(query: str, top_k: int = 5) -> list[dict]:
     if not _chunks:
         return []
 
-    # Get candidates from both methods
-    keyword_results = _keyword_search(query, top_k=15)
-    dense_results = _dense_search(query, top_k=15)
+    # ── Stage 1: candidate generation (sparse + dense) ──
+    keyword_results = _keyword_search(query, top_k=candidate_pool)
+    dense_results = _dense_search(query, top_k=candidate_pool)
 
     # Normalize scores to 0-1 range
     def normalize(results):
@@ -236,24 +315,27 @@ def search_evidence(query: str, top_k: int = 5) -> list[dict]:
     kw_scores = normalize(keyword_results)
     dense_scores = normalize(dense_results)
 
-    # Combine: weighted average (keyword 0.4, dense 0.6)
+    # Combine: weighted average (keyword 0.4, dense 0.6) for candidate ranking.
     all_chunk_ids = set(kw_scores.keys()) | set(dense_scores.keys())
     chunk_map = {c.chunk_id: c for c in _chunks}
 
-    combined = []
+    candidates = []
     for cid in all_chunk_ids:
         kw = kw_scores.get(cid, 0)
         dense = dense_scores.get(cid, 0)
         hybrid_score = 0.4 * kw + 0.6 * dense
         if cid in chunk_map:
-            combined.append((chunk_map[cid], hybrid_score, kw, dense))
+            candidates.append((chunk_map[cid], hybrid_score, kw, dense))
 
-    # Sort by hybrid score (this is the reranking step)
-    combined.sort(key=lambda x: x[1], reverse=True)
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    candidates = candidates[:candidate_pool]
 
-    # Return top_k with metadata
+    # ── Stage 2: rerank the top candidates with a cross-encoder ──
+    reranked = _rerank_candidates(query, candidates, top_k=top_k)
+
+    # ── Build the response — only the top reranked snippets reach the LLM ──
     results = []
-    for chunk, hybrid_score, kw_score, dense_score in combined[:top_k]:
+    for chunk, hybrid_score, kw_score, dense_score, rerank_score, backend in reranked:
         results.append({
             "text": chunk.text,
             "source": {
@@ -263,9 +345,11 @@ def search_evidence(query: str, top_k: int = 5) -> list[dict]:
             },
             "citation": chunk.to_citation(),
             "scores": {
+                "rerank": round(rerank_score, 4),
                 "hybrid": round(hybrid_score, 4),
                 "keyword": round(kw_score, 4),
                 "dense": round(dense_score, 4),
+                "rerank_backend": backend,
             },
         })
 
