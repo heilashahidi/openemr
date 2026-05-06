@@ -30,6 +30,8 @@ export interface DemographicsRow {
   email: string;
   /** Medical record number (identifier with use=usual or first ID). */
   mrn: string;
+  /** FHIR Patient.active — drives the identity-bar Active/Inactive badge. */
+  active: boolean;
 }
 
 function fullName(p: Patient): string {
@@ -99,5 +101,6 @@ export async function fetchDemographics(
     phone: pickPhone(p),
     email: pickEmail(p),
     mrn: pickMrn(p),
+    active: p.active ?? true,
   };
 }

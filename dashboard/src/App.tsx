@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { AllergiesCard } from "./widgets/Allergies";
+import { CareTeamCard } from "./widgets/CareTeam";
 import { ConditionsCard } from "./widgets/Conditions";
 import { DemographicsCard } from "./widgets/Demographics";
 import { DocumentsCard } from "./widgets/Documents";
@@ -17,6 +18,7 @@ import { ImmunizationsCard } from "./widgets/Immunizations";
 import { InsuranceCard } from "./widgets/Insurance";
 import { LabsCard } from "./widgets/Labs";
 import { MedicationsCard } from "./widgets/Medications";
+import { PatientHeader } from "./widgets/PatientHeader";
 import { VitalsCard } from "./widgets/Vitals";
 
 export function App(): JSX.Element {
@@ -43,6 +45,7 @@ export function App(): JSX.Element {
   // widget slots into another col-md-6 / col-lg-4 with no shell change.
   return (
     <div className="container-fluid p-2">
+      <PatientHeader patientId={patientId} />
       <div className="row">
         {/* Demographics is conventionally the first card on the page. */}
         <div className="col-md-6 col-lg-4 mb-2">
@@ -71,6 +74,9 @@ export function App(): JSX.Element {
         </div>
         <div className="col-md-6 col-lg-4 mb-2">
           <FamilyHistoryCard patientId={patientId} />
+        </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <CareTeamCard patientId={patientId} />
         </div>
         <div className="col-md-6 col-lg-4 mb-2">
           <DocumentsCard patientId={patientId} />

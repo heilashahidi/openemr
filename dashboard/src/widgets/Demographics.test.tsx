@@ -30,6 +30,7 @@ describe("DemographicsCard", () => {
       phone: "(505) 555-0193",
       email: "",
       mrn: "100011",
+      active: true,
     });
 
     const { container } = renderWithClient(<DemographicsCard patientId="abc" />);
@@ -48,6 +49,7 @@ describe("DemographicsCard", () => {
       phone: "(505) 555-0193",
       email: "",
       mrn: "100011",
+      active: true,
     });
 
     const { container } = renderWithClient(<DemographicsCard patientId="abc" />);
@@ -74,6 +76,7 @@ describe("DemographicsCard", () => {
   it("shows the empty state when every field is blank", async () => {
     vi.spyOn(patientApi, "fetchDemographics").mockResolvedValueOnce({
       name: "", dob: "", age: null, sex: "", address: "", phone: "", email: "", mrn: "",
+      active: true,
     });
 
     const { container } = renderWithClient(<DemographicsCard patientId="abc" />);
