@@ -7,6 +7,7 @@
  * SPA only owns the *interior* of the dashboard.
  */
 import { useEffect, useState } from "react";
+import { AllergiesCard } from "./widgets/Allergies";
 import { MedicationsCard } from "./widgets/Medications";
 
 export function App(): JSX.Element {
@@ -37,9 +38,12 @@ export function App(): JSX.Element {
         <div className="col-md-6 col-lg-4 mb-2">
           <MedicationsCard patientId={patientId} />
         </div>
+        <div className="col-md-6 col-lg-4 mb-2">
+          <AllergiesCard patientId={patientId} />
+        </div>
         {/* Future widgets land here:
-            <div className="col-md-6 col-lg-4 mb-2"><AllergiesCard ... /></div>
             <div className="col-md-6 col-lg-4 mb-2"><ConditionsCard ... /></div>
+            <div className="col-md-6 col-lg-4 mb-2"><EncountersCard ... /></div>
             ... */}
       </div>
     </div>
