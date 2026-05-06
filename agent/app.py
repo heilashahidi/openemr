@@ -120,6 +120,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     citations: list
+    claims: list = []
     tools_called: list
     tokens_used: dict
     verified: bool
@@ -216,6 +217,7 @@ async def chat(req: ChatRequest):
     return ChatResponse(
         response=final_text,
         citations=citations,
+        claims=result.get("claims") or [],
         tools_called=tools_called,
         tokens_used={
             "input": usage.get("input", 0),
@@ -262,3 +264,63 @@ async def health():
 async def ui():
     """Serve the chat iframe UI. Loaded by demographics.php in OpenEMR."""
     return FileResponse(Path(__file__).parent / "chat.html", media_type="text/html")
+
+
+def _resolve_document_path(document_id: int) -> Path:
+    out = _run_sql(f"SELECT name FROM documents WHERE id={document_id} LIMIT 1;") or ""
+    lines = out.strip().split("\n")
+    if len(lines) < 2:
+        raise HTTPException(404, "document not found")
+    name = lines[1].strip()
+    subdir = "intake-forms" if "intake" in name.lower() else "lab-results"
+    path = Path(__file__).parent / "sample_docs" / subdir / name
+    if not path.exists():
+        raise HTTPException(404, "source file missing on host")
+    return path
+
+
+@app.get("/document/{document_id}/file")
+async def document_file(document_id: int):
+    """Serve the original PDF/PNG for a given document_id."""
+    path = _resolve_document_path(document_id)
+    media = "application/pdf" if path.suffix.lower() == ".pdf" else "image/png"
+    return FileResponse(path, media_type=media)
+
+
+@app.get("/document/{document_id}/page/{page_num}.png")
+async def document_page_png(document_id: int, page_num: int):
+    """Rasterize page N of a PDF source and return as PNG.
+
+    The viewer overlays a colored rectangle at the citation's bbox on top
+    of this PNG. PNG sources just round-trip to /file directly.
+    """
+    path = _resolve_document_path(document_id)
+    if path.suffix.lower() != ".pdf":
+        return FileResponse(path, media_type="image/png")
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except ImportError:
+        raise HTTPException(500, "pymupdf not installed")
+    doc = fitz.open(path)
+    if page_num < 1 or page_num > len(doc):
+        doc.close()
+        raise HTTPException(404, f"page {page_num} out of range (1..{len(doc)})")
+    page = doc[page_num - 1]
+    # Render at 2x to get a sharp image without ballooning size.
+    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+    png_bytes = pix.tobytes("png")
+    doc.close()
+    from fastapi.responses import Response
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@app.get("/document/{document_id}/view")
+async def document_view(document_id: int):
+    """HTML page that renders the source PDF/PNG with a bbox overlay.
+
+    Query params:
+      page=N        which page to scroll to (1-based)
+      bboxes=JSON   list of {page,x0,y0,x1,y1,page_width,page_height}
+                    matching what's stored in derived_fact_citations.bbox_json
+    """
+    return FileResponse(Path(__file__).parent / "doc_viewer.html", media_type="text/html")

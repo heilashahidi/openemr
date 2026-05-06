@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Annotated, Optional, TypedDict
 
 from anthropic import Anthropic
@@ -81,6 +82,7 @@ class GraphState(TypedDict, total=False):
     evidence: Optional[list]               # Result from evidence_retriever
     chart: Optional[dict]                  # Result from chart_lookup
     final_answer: Optional[str]            # Filled when supervisor decides we're done
+    claims: Optional[list]                 # Machine-readable citation array
     handoffs: Annotated[list, _append]     # Audit trail of handoff decisions
     usage: Annotated[dict, _merge_usage]   # Token totals across all LLM calls
     next: Optional[str]                    # Supervisor's next-step decision
@@ -195,6 +197,31 @@ inline when source.document is present, state plainly otherwise.
 _BRIEFING_TRIGGERS = ("briefing", "pre-room", "pre room")
 
 
+# Appended to the answer system prompt when a citation catalog is available.
+# The catalog is given as numbered entries; the model must cite by number.
+_CITATION_MARKER_RULE = """
+
+CITATION MARKERS:
+You will be given a "Numbered citation catalog" listing claims [1] [2] [3] ...
+Each entry has source_type, source_id, optional page_or_section, and a
+verbatim quote from the source.
+
+When you make a clinical claim that came from one of these sources, append
+the matching marker(s) immediately after the claim, e.g.
+  "Apixaban 5 mg PO twice daily [3]."
+or for guideline-backed reasoning:
+  "ADA recommends HbA1c target <7% [12]."
+
+Rules:
+- Use the exact form [N] (square brackets, integer). Multiple markers OK: [3][7].
+- Cite ONLY catalog entries that were provided. Do NOT invent numbers.
+- For seeded patients with no catalog (or a sparse one), state facts plainly
+  without markers — chart data is the source of truth even when no document
+  provenance exists.
+- Do NOT also write "(source: ..., "...")" inline — the marker IS the citation.
+"""
+
+
 def _is_briefing(query: str) -> bool:
     q = (query or "").lower()
     return any(t in q for t in _BRIEFING_TRIGGERS)
@@ -237,12 +264,86 @@ def _usage_dict(resp) -> dict:
     return {"input": inp, "output": out, "total": inp + out}
 
 
-def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
-    """Second LLM call — returns (answer_text, token_usage)."""
+def _build_claims_catalog(state: GraphState) -> list[dict]:
+    """Walk chart + evidence and produce a numbered list of citation claims.
+
+    Each claim has the five required fields plus bbox so the UI can render
+    a PDF overlay. The list is offered to the synthesis prompt; the model
+    cites by number. Claims with no source.source_id are filtered out so
+    seeded patients (no provenance) don't end up with hollow markers.
+    """
+    catalog: list[dict] = []
+    seen: set[tuple] = set()
+
+    def add_from_source(src: dict):
+        if not src:
+            return
+        sid = src.get("source_id") or ""
+        quote = src.get("quote_or_value") or ""
+        if not sid:
+            return
+        # De-duplicate (same fact often appears in multiple chart buckets).
+        key = (sid, src.get("field_or_chunk_id") or "", quote)
+        if key in seen:
+            return
+        seen.add(key)
+        catalog.append({
+            "id": len(catalog) + 1,
+            "source_type": src.get("source_type") or "",
+            "source_id": sid,
+            "page_or_section": src.get("page_or_section") or "",
+            "field_or_chunk_id": src.get("field_or_chunk_id") or "",
+            "quote_or_value": quote,
+            "bbox": src.get("bbox") or [],
+            "document_id": src.get("document_id"),
+            "target_table": src.get("target_table"),
+            "target_id": src.get("target_id"),
+        })
+
+    chart = state.get("chart") or {}
+    for key in ("medications", "allergies", "conditions", "surgeries", "encounters", "labs", "lab_interpretations"):
+        for row in (chart.get(key) or []):
+            add_from_source(row.get("source"))
+    add_from_source((chart.get("history") or {}).get("source"))
+
+    # Evidence snippets become guideline-typed claims.
+    for e in (state.get("evidence") or []):
+        src = e.get("source") or {}
+        sid = src.get("file")
+        if not sid:
+            continue
+        key = ("guideline", sid, src.get("section") or "", (e.get("text") or "")[:160])
+        if key in seen:
+            continue
+        seen.add(key)
+        catalog.append({
+            "id": len(catalog) + 1,
+            "source_type": "guideline",
+            "source_id": sid,
+            "page_or_section": src.get("section") or "",
+            "field_or_chunk_id": src.get("guideline") or "",
+            "quote_or_value": (e.get("text") or "")[:300],
+            "bbox": [],
+            "document_id": None,
+        })
+
+    return catalog
+
+
+def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
+    """Second LLM call — returns (answer_markdown, claims, token_usage).
+
+    The model is given a numbered citation catalog and instructed to use
+    `[N]` markers in its answer text. The catalog comes back as the
+    machine-readable `claims` array — every entry has the required five
+    fields and an optional PDF bbox.
+    """
     query = state.get("query") or ""
+    catalog = _build_claims_catalog(state)
+
     parts = [f"Question: {query}"]
     if state.get("chart"):
-        parts.append("Patient chart (with source citations):\n" +
+        parts.append("Patient chart (full structure):\n" +
                      json.dumps(state["chart"], indent=2, default=str))
     if state.get("extraction"):
         parts.append("Extraction (full):\n" + json.dumps(state["extraction"], indent=2))
@@ -251,14 +352,27 @@ def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
             src = e.get("source") or {}
             return f"{src.get('file','?')} § {src.get('section','?')}"
         ev = "\n\n".join(
-            f"[{i+1}] ({_label(e)})\n{e.get('text','')}"
+            f"[evidence#{i+1}] ({_label(e)})\n{e.get('text','')}"
             for i, e in enumerate(state["evidence"])
         )
         parts.append("Evidence snippets (full):\n" + ev)
 
+    if catalog:
+        cat_lines = "\n".join(
+            f"[{c['id']}] {c['source_type']}::{c['source_id']}"
+            f"{' § ' + c['page_or_section'] if c['page_or_section'] else ''}"
+            f' — "{c["quote_or_value"][:120]}"'
+            for c in catalog
+        )
+        parts.append(
+            "Numbered citation catalog (use [N] markers in your answer to cite):\n" + cat_lines
+        )
+
     # Apply the W1 briefing template when the question is a pre-room briefing
     # so the format stays stable across all patients.
-    system = _ANSWER_SYSTEM + (_BRIEFING_FORMAT if _is_briefing(query) else "")
+    system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + (
+        _BRIEFING_FORMAT if _is_briefing(query) else ""
+    )
 
     resp = _client.messages.create(
         model=MODEL,
@@ -266,7 +380,12 @@ def _synthesize_answer(state: GraphState) -> tuple[str, dict]:
         system=system,
         messages=[{"role": "user", "content": "\n\n".join(parts)}],
     )
-    return resp.content[0].text.strip(), _usage_dict(resp)
+    answer = resp.content[0].text.strip()
+
+    # Only return the subset of catalog entries the model actually cited.
+    used_ids = set(int(m) for m in re.findall(r"\[(\d+)\]", answer))
+    claims_used = [c for c in catalog if c["id"] in used_ids]
+    return answer, claims_used, _usage_dict(resp)
 
 
 def supervisor(state: GraphState) -> GraphState:
@@ -295,8 +414,9 @@ def supervisor(state: GraphState) -> GraphState:
         "usage": usage,
     }
     if decision["next"] == "finish":
-        answer, syn_usage = _synthesize_answer(state)
+        answer, claims, syn_usage = _synthesize_answer(state)
         update["final_answer"] = answer
+        update["claims"] = claims
         # Combine routing-call usage and synthesis-call usage for this turn.
         update["usage"] = _merge_usage(usage, syn_usage)
     return update
@@ -415,46 +535,84 @@ def chart_lookup(state: GraphState) -> GraphState:
             "address": ", ".join(p for p in [r[6], r[7], f"{r[8]} {r[9]}".strip()] if p),
         }
 
-    def collect(rows, field_names):
-        """Map raw rows → dicts with a `source` block at the end."""
+    def _source_type_for(doc_name: str) -> str:
+        if not doc_name:
+            return ""
+        n = doc_name.lower()
+        if "intake" in n:
+            return "intake_form"
+        if n.endswith(".pdf") or n.endswith(".png") or n.endswith(".jpg"):
+            return "lab_pdf"
+        return "document"
+
+    def collect(rows, field_names, target_table: str):
+        """Map raw rows → dicts with a `source` block carrying all five
+        required citation fields plus bbox.
+        Trailing 5 columns of each row are: document_id, document_name,
+        page_or_section, field_or_chunk_id, quote_or_value, bbox_json.
+        """
         out = []
         for r in rows:
-            d = dict(zip(field_names, r))
-            doc = r[-2] if len(r) >= 2 else ""
-            quote = r[-1] if len(r) >= 1 else ""
-            d["source"] = {"document": doc, "quote": quote}
+            n = len(field_names)
+            d = dict(zip(field_names, r[:n]))
+            doc_id = r[n] if len(r) > n else ""
+            doc = r[n + 1] if len(r) > n + 1 else ""
+            page_or_section = r[n + 2] if len(r) > n + 2 else ""
+            field_or_chunk = r[n + 3] if len(r) > n + 3 else ""
+            quote = r[n + 4] if len(r) > n + 4 else ""
+            bbox_raw = r[n + 5] if len(r) > n + 5 else ""
+            try:
+                bbox = json.loads(bbox_raw) if bbox_raw else []
+            except Exception:
+                bbox = []
+            d["source"] = {
+                "source_type": _source_type_for(doc),
+                "source_id": doc,
+                "document_id": int(doc_id) if doc_id and doc_id.isdigit() else None,
+                "page_or_section": page_or_section,
+                "field_or_chunk_id": field_or_chunk,
+                "quote_or_value": quote,
+                "bbox": bbox,
+                "target_table": target_table,
+                "target_id": int(d.get("id")) if str(d.get("id", "")).isdigit() else None,
+            }
             out.append(d)
         return out
 
+    # Citation tail used for every chart-row query — the 6-column block
+    # collect() expects after the row's own data.
+    cite_tail = ("c.document_id, d.name, c.page_or_section, "
+                 "c.field_or_chunk_id, c.quote_or_value, c.bbox_json")
+
     # Medications
     rows = _rows(
-        f"SELECT t.id, t.drug, t.dosage, d.name, c.quote_or_value "
+        f"SELECT t.id, t.drug, t.dosage, {cite_tail} "
         f"FROM prescriptions t "
         f"LEFT JOIN derived_fact_citations c ON c.target_table='prescriptions' AND c.target_id=t.id "
         f"LEFT JOIN documents d ON d.id=c.document_id "
         f"WHERE t.patient_id={pid} AND t.active=1;"
     )
-    chart["medications"] = collect(rows, ["id", "drug", "dosage"])
+    chart["medications"] = collect(rows, ["id", "drug", "dosage"], "prescriptions")
 
     # Allergies, problems, surgeries (all in `lists`, distinguished by type)
     for kind, type_name in [("allergies", "allergy"),
                             ("conditions", "medical_problem"),
                             ("surgeries", "surgery")]:
         rows = _rows(
-            f"SELECT t.id, t.title, d.name, c.quote_or_value "
+            f"SELECT t.id, t.title, {cite_tail} "
             f"FROM lists t "
             f"LEFT JOIN derived_fact_citations c ON c.target_table='lists' AND c.target_id=t.id "
             f"LEFT JOIN documents d ON d.id=c.document_id "
             f"WHERE t.pid={pid} AND t.type='{type_name}' AND t.activity=1;"
         )
-        chart[kind] = collect(rows, ["id", "title"])
+        chart[kind] = collect(rows, ["id", "title"], "lists")
 
     # Family + social history (single history_data row)
     rows = _rows(
         f"SELECT t.id, COALESCE(t.history_father,''), COALESCE(t.history_mother,''), "
         f"COALESCE(t.history_siblings,''), COALESCE(t.tobacco,''), COALESCE(t.alcohol,''), "
         f"COALESCE(t.exercise_patterns,''), COALESCE(t.additional_history,''), "
-        f"d.name, c.quote_or_value "
+        f"{cite_tail} "
         f"FROM history_data t "
         f"LEFT JOIN derived_fact_citations c ON c.target_table='history_data' AND c.target_id=t.id "
         f"LEFT JOIN documents d ON d.id=c.document_id "
@@ -462,27 +620,42 @@ def chart_lookup(state: GraphState) -> GraphState:
     )
     if rows:
         r = rows[0]
+        # The 8 history columns then 6 citation columns.
+        try:
+            bbox = json.loads(r[13]) if len(r) > 13 and r[13] else []
+        except Exception:
+            bbox = []
         chart["history"] = {
             "father": r[1], "mother": r[2], "siblings": r[3],
             "tobacco": r[4], "alcohol": r[5], "exercise": r[6],
             "additional": r[7],
-            "source": {"document": r[8], "quote": r[9]},
+            "source": {
+                "source_type": _source_type_for(r[9] if len(r) > 9 else ""),
+                "source_id": r[9] if len(r) > 9 else "",
+                "document_id": int(r[8]) if len(r) > 8 and r[8] and r[8].isdigit() else None,
+                "page_or_section": r[10] if len(r) > 10 else "",
+                "field_or_chunk_id": r[11] if len(r) > 11 else "",
+                "quote_or_value": r[12] if len(r) > 12 else "",
+                "bbox": bbox,
+                "target_table": "history_data",
+                "target_id": int(r[0]) if str(r[0]).isdigit() else None,
+            },
         }
 
     # Encounters with chief concern citation
     rows = _rows(
-        f"SELECT t.id, t.encounter, t.date, LEFT(t.reason,400), d.name, c.quote_or_value "
+        f"SELECT t.id, t.encounter, t.date, LEFT(t.reason,400), {cite_tail} "
         f"FROM form_encounter t "
         f"LEFT JOIN derived_fact_citations c ON c.target_table='form_encounter' AND c.target_id=t.id "
         f"LEFT JOIN documents d ON d.id=c.document_id "
         f"WHERE t.pid={pid} ORDER BY t.date DESC;"
     )
-    chart["encounters"] = collect(rows, ["id", "encounter", "date", "reason"])
+    chart["encounters"] = collect(rows, ["id", "encounter", "date", "reason"], "form_encounter")
 
     # Lab results, joined back through report → order → patient
     rows = _rows(
         f"SELECT pres.procedure_result_id, pres.result_text, pres.result, pres.units, "
-        f"pres.`range`, COALESCE(NULLIF(pres.abnormal,''),''), d.name, c.quote_or_value "
+        f"pres.`range`, COALESCE(NULLIF(pres.abnormal,''),''), {cite_tail} "
         f"FROM procedure_result pres "
         f"JOIN procedure_report rep ON rep.procedure_report_id=pres.procedure_report_id "
         f"JOIN procedure_order po ON po.procedure_order_id=rep.procedure_order_id "
@@ -490,18 +663,18 @@ def chart_lookup(state: GraphState) -> GraphState:
         f"LEFT JOIN documents d ON d.id=c.document_id "
         f"WHERE po.patient_id={pid};"
     )
-    chart["labs"] = collect(rows, ["id", "test", "value", "units", "range", "flag"])
+    chart["labs"] = collect(rows, ["id", "test", "value", "units", "range", "flag"], "procedure_result")
 
     # Lab interpretations (procedure_report.report_notes)
     rows = _rows(
-        f"SELECT rep.procedure_report_id, LEFT(rep.report_notes,800), d.name, c.quote_or_value "
+        f"SELECT rep.procedure_report_id, LEFT(rep.report_notes,800), {cite_tail} "
         f"FROM procedure_report rep "
         f"JOIN procedure_order po ON po.procedure_order_id=rep.procedure_order_id "
         f"LEFT JOIN derived_fact_citations c ON c.target_table='procedure_report' AND c.target_id=rep.procedure_report_id "
         f"LEFT JOIN documents d ON d.id=c.document_id "
         f"WHERE po.patient_id={pid};"
     )
-    chart["lab_interpretations"] = collect(rows, ["id", "notes"])
+    chart["lab_interpretations"] = collect(rows, ["id", "notes"], "procedure_report")
 
     counts = {k: len(v) if isinstance(v, list) else 1
               for k, v in chart.items() if k != "patient_id"}

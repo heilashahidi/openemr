@@ -31,6 +31,78 @@ def find_openemr_container():
     return out.split()[0] if out else None
 
 
+def _document_source_path(document_id):
+    """Look up the host filesystem path of the original sample document.
+
+    The `documents.url` column points at the OpenEMR container's storage
+    path (not directly accessible from the host). For bbox computation we
+    need the source file on the host — luckily our four sample patients
+    came from agent/sample_docs/, and `documents.name` is the filename.
+    """
+    if not document_id:
+        return None
+    out = run_sql(f"SELECT name FROM documents WHERE id={document_id} LIMIT 1;")
+    if not out:
+        return None
+    lines = out.strip().split("\n")
+    if len(lines) < 2:
+        return None
+    name = lines[1].strip()
+    base = os.path.dirname(__file__)
+    subdir = "intake-forms" if "intake" in name.lower() else "lab-results"
+    candidate = os.path.join(base, "sample_docs", subdir, name)
+    return candidate if os.path.exists(candidate) else None
+
+
+def _compute_bboxes(pdf_path, quote, max_pages=20):
+    """Locate `quote` inside a PDF and return the matching rectangles.
+
+    Returns list[dict]: [{page, x0, y0, x1, y1, page_width, page_height}, ...].
+    PNG/image sources return [] (PDF text-search doesn't apply).
+    """
+    if not pdf_path or not quote or not pdf_path.lower().endswith(".pdf"):
+        return []
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return []
+    needle = (quote or "").strip()
+    if not needle:
+        return []
+    # PyMuPDF's search_for is line-based; long quotes spanning lines won't
+    # match. Try a progressively shorter prefix.
+    candidates = [needle]
+    if len(needle) > 80:
+        candidates += [needle[:80], needle[:50]]
+    elif len(needle) > 50:
+        candidates += [needle[:50]]
+    candidates += [needle[:25]] if len(needle) > 25 else []
+    rects = []
+    try:
+        doc = fitz.open(pdf_path)
+        for pno in range(min(len(doc), max_pages)):
+            page = doc[pno]
+            for cand in candidates:
+                hits = page.search_for(cand, quads=False)
+                if hits:
+                    pw, ph = page.rect.width, page.rect.height
+                    for r in hits:
+                        rects.append({
+                            "page": pno + 1,
+                            "x0": round(r.x0, 2), "y0": round(r.y0, 2),
+                            "x1": round(r.x1, 2), "y1": round(r.y1, 2),
+                            "page_width": round(pw, 2),
+                            "page_height": round(ph, 2),
+                        })
+                    break  # stop trying shorter candidates if this one matched
+            if rects:
+                break  # stop scanning pages after first hit
+        doc.close()
+    except Exception:
+        return []
+    return rects
+
+
 def add_citation(target_table, target_id, document_id, citation=None, field=None):
     """Persist a link from a derived fact (DB row) back to its source document.
 
@@ -39,18 +111,26 @@ def add_citation(target_table, target_id, document_id, citation=None, field=None
               came from a list[str] field with no per-item citation — we
               still record document_id + field so the trace exists.
     field:    fallback field_or_chunk_id when no citation dict is provided.
+
+    Also computes a PDF bounding-box (best-effort) so the UI can render a
+    visual highlight. Quietly skips when the source is a PNG/image or the
+    quote can't be located.
     """
     if not document_id or not target_id:
         return
     c = citation or {}
     page = escape_sql(c.get('page_or_section') or '')
     fld = escape_sql(c.get('field_or_chunk_id') or field or '')
-    quote = escape_sql(c.get('quote_or_value') or '')
+    quote = c.get('quote_or_value') or ''
+
+    bboxes = _compute_bboxes(_document_source_path(document_id), quote)
+    bbox_json = escape_sql(json.dumps(bboxes)) if bboxes else ''
+
     run_sql(
         f"INSERT INTO derived_fact_citations (target_table, target_id, document_id, "
-        f"page_or_section, field_or_chunk_id, quote_or_value) "
+        f"page_or_section, field_or_chunk_id, quote_or_value, bbox_json) "
         f"VALUES ('{escape_sql(target_table)}', {target_id}, {document_id}, "
-        f"'{page}', '{fld}', '{quote}');"
+        f"'{page}', '{fld}', '{escape_sql(quote)}', '{bbox_json}');"
     )
 
 

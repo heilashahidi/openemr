@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Citation viewer</title>
+<style>
+  body { margin: 0; font-family: -apple-system, sans-serif; background: #1a1f2e; color: #e2e8f0; }
+  header {
+    padding: 12px 20px; background: #0f1620; border-bottom: 1px solid #2a3344;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header .title { font-weight: 600; }
+  header .meta { color: #7a8599; font-size: 12px; }
+  #stage {
+    display: flex; justify-content: center; padding: 24px;
+    overflow: auto;
+  }
+  .page-wrapper {
+    position: relative; display: inline-block;
+    background: white; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .page-wrapper img { display: block; max-width: 100%; }
+  .bbox-overlay {
+    position: absolute;
+    border: 3px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.18);
+    box-shadow: 0 0 0 6000px rgba(0,0,0,0.05);
+    pointer-events: none;
+    border-radius: 2px;
+    transition: opacity 0.2s;
+  }
+  .err { padding: 24px; color: #ef4444; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title" id="docTitle">Citation</span>
+  <span class="meta" id="docMeta"></span>
+</header>
+<div id="stage"></div>
+
+<script>
+(async function() {
+  const params = new URLSearchParams(location.search);
+  const docId = params.get('document_id') || params.get('doc');
+  const page = parseInt(params.get('page') || '1', 10);
+  let bboxes = [];
+  try {
+    bboxes = JSON.parse(params.get('bboxes') || '[]');
+  } catch (e) {
+    bboxes = [];
+  }
+
+  const stage = document.getElementById('stage');
+  const titleEl = document.getElementById('docTitle');
+  const metaEl  = document.getElementById('docMeta');
+
+  if (!docId) {
+    stage.innerHTML = '<div class="err">missing ?document_id</div>';
+    return;
+  }
+
+  // Resolve the document name + the page bboxes for the requested page.
+  const onPage = bboxes.filter(b => (b.page || 1) === page);
+  metaEl.textContent =
+    `document_id=${docId} · page ${page} · ${onPage.length} highlight${onPage.length === 1 ? '' : 's'}`;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'page-wrapper';
+  const img = document.createElement('img');
+  img.src = `/document/${docId}/page/${page}.png`;
+  img.alt = `Document ${docId} page ${page}`;
+
+  img.onload = () => {
+    // Server renders PDFs at 2x; PyMuPDF coordinates are in 72-dpi user
+    // space. Compute the displayed-px-per-pdf-point ratio from the natural
+    // image size and the bbox's stored page_width.
+    if (!onPage.length) return;
+    const refW = onPage[0].page_width || (img.naturalWidth / 2);
+    const refH = onPage[0].page_height || (img.naturalHeight / 2);
+    const sx = img.clientWidth / refW;
+    const sy = img.clientHeight / refH;
+    onPage.forEach(b => {
+      const div = document.createElement('div');
+      div.className = 'bbox-overlay';
+      div.style.left   = (b.x0 * sx) + 'px';
+      div.style.top    = (b.y0 * sy) + 'px';
+      div.style.width  = ((b.x1 - b.x0) * sx) + 'px';
+      div.style.height = ((b.y1 - b.y0) * sy) + 'px';
+      wrap.appendChild(div);
+    });
+  };
+  img.onerror = () => {
+    stage.innerHTML = '<div class="err">could not render the document</div>';
+  };
+
+  wrap.appendChild(img);
+  stage.appendChild(wrap);
+
+  // Fetch the document name for the header.
+  try {
+    const resp = await fetch(`/document/${docId}/file`, { method: 'HEAD' });
+    titleEl.textContent = `📄 document ${docId}`;
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
