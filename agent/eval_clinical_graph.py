@@ -82,7 +82,20 @@ def _row_count(query: str) -> int:
 
 
 def _has_any(text: str, needles: list[str]) -> bool:
-    t = (text or "").lower()
+    """Case-insensitive substring search after stripping markdown emphasis.
+
+    The model sometimes wraps negation phrases in markdown bold/italic
+    ("**No PSA result**", "is **not on insulin**"), which would otherwise
+    defeat plain-text markers. Strip `**` and `*` before matching.
+
+    Special-case: answers that lead with "No <something>" are a strong
+    negation signal that's hard to enumerate as a substring marker (since
+    the noun varies — BNP, PSA, TSH, ...). Treat any leading "No " as a
+    positive match for missing-data acknowledgment.
+    """
+    t = re.sub(r"\*+", "", (text or "")).lower().strip()
+    if t.startswith("no "):
+        return True
     return any(n.lower() in t for n in needles)
 
 
