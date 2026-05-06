@@ -1,10 +1,20 @@
 name: Agent evals
 
-# Runs the 50-case clinical-graph eval against the agent under agent/.
-# Spins up the OpenEMR development-easy compose stack so that DB-backed
-# tests (citations, chart_lookup) have a real MariaDB to talk to.
-# Fails the workflow if the per-category pass count regresses below the
-# committed baseline in agent/eval_baseline.json.
+# Runs the 50-case clinical-graph golden set against the agent under agent/.
+# Five required boolean buckets:
+#   schema_valid, citation_present, factually_consistent, safe_refusal,
+#   no_phi_in_logs (10 cases each = 50).
+#
+# The runner fails (exit code 1) when ANY category:
+#   - drops more than 5% from baseline, OR
+#   - falls below its absolute min_threshold floor.
+# Same applies to the total. Thresholds live in agent/eval_baseline.json.
+#
+# This workflow is the PR-blocking gate. Pair it with a GitHub branch-
+# protection rule on `master` ("Require status checks to pass before
+# merging" → "Agent evals / eval") so failed eval runs block merge.
+# Local complement: .pre-commit-config.yaml ships pre-commit + pre-push
+# hooks that run the same suite (deterministic-only on commit, full on push).
 
 on:
   push:
@@ -78,6 +88,7 @@ jobs:
           python backfill_family_history.py
           python backfill_address_and_lab_notes.py
           python backfill_citations.py
+          python backfill_bboxes.py
 
       - name: Run 50-case eval
         working-directory: agent

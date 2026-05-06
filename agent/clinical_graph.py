@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Annotated, Optional, TypedDict
 
 from anthropic import Anthropic
@@ -53,6 +54,7 @@ if os.path.exists(_env):
 from document_extractor import extract_document
 from evidence_retriever import index_guidelines, search_evidence
 from ingest_to_openemr import run_sql
+from clinical_logger import log_encounter, estimate_cost_usd
 
 MODEL = "claude-sonnet-4-5"
 _client = Anthropic()
@@ -395,6 +397,7 @@ def supervisor(state: GraphState) -> GraphState:
     unredacted state — keeps routing prompts cheap while ensuring the final
     answer never has to invent values from a truncated preview.
     """
+    t0 = time.time()
     resp = _client.messages.create(
         model=MODEL,
         max_tokens=512,
@@ -410,6 +413,7 @@ def supervisor(state: GraphState) -> GraphState:
             "from": "supervisor",
             "to": decision["next"],
             "reason": decision.get("reason", ""),
+            "elapsed_ms": round((time.time() - t0) * 1000, 1),
         }],
         "usage": usage,
     }
@@ -419,6 +423,8 @@ def supervisor(state: GraphState) -> GraphState:
         update["claims"] = claims
         # Combine routing-call usage and synthesis-call usage for this turn.
         update["usage"] = _merge_usage(usage, syn_usage)
+        # Replace the elapsed time with total (routing + synthesis).
+        update["handoffs"][0]["elapsed_ms"] = round((time.time() - t0) * 1000, 1)
     return update
 
 
@@ -437,12 +443,14 @@ def _route_from_supervisor(state: GraphState) -> str:
 
 def intake_extractor(state: GraphState) -> GraphState:
     """Extract structured fields from the attached document."""
+    t0 = time.time()
     file_path = state.get("file_path")
     doc_type = state.get("doc_type") or "intake_form"
     if not file_path:
         return {
             "extraction": {"success": False, "error": "no file_path in state"},
-            "handoffs": [{"from": "intake_extractor", "to": "supervisor", "reason": "no file"}],
+            "handoffs": [{"from": "intake_extractor", "to": "supervisor",
+                          "reason": "no file", "elapsed_ms": round((time.time() - t0) * 1000, 1)}],
         }
     result = extract_document(file_path, doc_type)
     # extract_document already returns `tokens: {input, output}`; promote it
@@ -461,6 +469,7 @@ def intake_extractor(state: GraphState) -> GraphState:
             "from": "intake_extractor",
             "to": "supervisor",
             "reason": f"extracted {os.path.basename(file_path)} ({'ok' if result.get('success') else 'error'})",
+            "elapsed_ms": round((time.time() - t0) * 1000, 1),
         }],
         "usage": usage,
     }
@@ -468,6 +477,7 @@ def intake_extractor(state: GraphState) -> GraphState:
 
 def evidence_retriever(state: GraphState) -> GraphState:
     """Search the guideline corpus for snippets relevant to the query."""
+    t0 = time.time()
     query = state.get("query") or ""
     snippets = search_evidence(query, top_k=5)
     return {
@@ -476,6 +486,7 @@ def evidence_retriever(state: GraphState) -> GraphState:
             "from": "evidence_retriever",
             "to": "supervisor",
             "reason": f"retrieved {len(snippets)} snippets",
+            "elapsed_ms": round((time.time() - t0) * 1000, 1),
         }],
     }
 
@@ -512,12 +523,14 @@ def _rows(query: str) -> list[list[str]]:
 
 def chart_lookup(state: GraphState) -> GraphState:
     """Pull the patient's stored chart with citations for every fact."""
+    t0 = time.time()
     pid = state.get("patient_id")
     if not pid:
         return {
             "chart": {"error": "no patient_id in state"},
             "handoffs": [{"from": "chart_lookup", "to": "supervisor",
-                          "reason": "no patient_id"}],
+                          "reason": "no patient_id",
+                          "elapsed_ms": round((time.time() - t0) * 1000, 1)}],
         }
 
     chart: dict = {"patient_id": pid}
@@ -684,6 +697,7 @@ def chart_lookup(state: GraphState) -> GraphState:
             "from": "chart_lookup",
             "to": "supervisor",
             "reason": f"retrieved chart for pid={pid}: {counts}",
+            "elapsed_ms": round((time.time() - t0) * 1000, 1),
         }],
     }
 
@@ -720,15 +734,47 @@ GRAPH = build_graph()
 index_guidelines()
 
 
-def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0) -> dict:
-    """Convenience runner. Returns the terminal state."""
+def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0,
+        eval_outcome: Optional[str] = None) -> dict:
+    """Convenience runner. Returns the terminal state.
+
+    Also emits one redacted JSON record per call to the encounter log so the
+    tool sequence, latency-per-step, token usage, retrieval hits, extraction
+    confidence, and (if running under the eval suite) the eval outcome are
+    captured for review without leaking PHI.
+    """
     initial: GraphState = {"query": query, "handoffs": [], "usage": {}}
     if file_path:
         initial["file_path"] = file_path
         initial["doc_type"] = doc_type or "intake_form"
     if patient_id:
         initial["patient_id"] = patient_id
-    return GRAPH.invoke(initial)
+
+    t_total_start = time.time()
+    result = GRAPH.invoke(initial)
+    total_elapsed_ms = round((time.time() - t_total_start) * 1000, 1)
+
+    handoffs = result.get("handoffs") or []
+    usage = result.get("usage") or {}
+    extraction = result.get("extraction") or {}
+    extracted = extraction.get("extraction") or {}
+
+    log_encounter({
+        "query": query,
+        "patient_id": patient_id or None,
+        "file_path": os.path.basename(file_path) if file_path else None,
+        "tool_sequence": [f"{h.get('from')}→{h.get('to')}" for h in handoffs],
+        "latency_per_step_ms": [h.get("elapsed_ms") for h in handoffs],
+        "total_latency_ms": total_elapsed_ms,
+        "tokens_used": usage,
+        "cost_estimate_usd": estimate_cost_usd(usage),
+        "retrieval_hits": len(result.get("evidence") or []),
+        "extraction_confidence": extracted.get("extraction_confidence"),
+        "claims_count": len(result.get("claims") or []),
+        "answer_length_chars": len(result.get("final_answer") or ""),
+        "eval_outcome": eval_outcome,
+    })
+    return result
 
 
 # ── Demo ───────────────────────────────────────────────────────────────────

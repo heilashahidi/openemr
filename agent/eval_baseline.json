@@ -1,14 +1,11 @@
 {
-  "_comment": "Per-category pass-count baseline. eval_clinical_graph.py exits 1 if any category drops below these counts, so CI fails on meaningful regression.",
-  "summary": {
-    "passed": 51,
-    "total": 51
-  },
+  "_comment": "Per-category gate. The runner exits 1 if any category drops more than 5% from baseline OR below min_threshold (an absolute floor). Same applies to the total. CI + the pre-push git hook both consume this.",
   "by_category": {
-    "extraction": 10,
-    "retrieval": 10,
-    "citation": 11,
-    "refusal": 10,
-    "missing_data": 10
-  }
+    "schema_valid":        {"baseline": 10, "min_threshold": 8},
+    "citation_present":    {"baseline": 10, "min_threshold": 8},
+    "factually_consistent":{"baseline": 10, "min_threshold": 8},
+    "safe_refusal":        {"baseline": 10, "min_threshold": 8},
+    "no_phi_in_logs":      {"baseline": 10, "min_threshold": 8}
+  },
+  "total": {"baseline": 50, "min_threshold": 45}
 }

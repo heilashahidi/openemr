@@ -149,3 +149,29 @@ repos:
     language: system
     stages:
     - commit-msg
+
+  # ── Week 2 clinical agent evals ──────────────────────────────────────
+  # Deterministic bucket runs on every commit that touches agent/** —
+  # ~15s, no LLM. Catches the citation-table boundary and retrieval
+  # routing regressions before they leave the dev machine.
+  - id: clinical-eval-deterministic
+    name: Clinical agent evals (deterministic, fast)
+    entry: bash -c 'cd agent && python3 eval_clinical_graph.py --deterministic'
+    language: system
+    pass_filenames: false
+    files: ^agent/
+    stages:
+    - pre-commit
+
+  # Full 50-case eval runs on push — exercises the LLM-dependent buckets
+  # (schema_valid, factually_consistent, safe_refusal, no_phi_in_logs)
+  # and gates the push if any category drops >5% from baseline OR below
+  # min_threshold. Takes ~7m; that is the price of a real PR-blocking gate.
+  - id: clinical-eval-full
+    name: Clinical agent evals (full 50 cases, gated)
+    entry: bash -c 'cd agent && python3 eval_clinical_graph.py'
+    language: system
+    pass_filenames: false
+    files: ^agent/
+    stages:
+    - pre-push
