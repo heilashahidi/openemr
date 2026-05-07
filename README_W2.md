@@ -1,6 +1,6 @@
 # README_W2.md — Clinical Co-Pilot, Week 2
 
-> Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 51-case boolean-rubric eval suite gates regression in CI.
+> Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 58-case boolean-rubric eval suite gates regression in CI.
 
 **Companion docs:** `ARCHITECTURE_W2.md` (the design narrative), `README_W1.md` (the Week 1 baseline this builds on).
 
@@ -17,9 +17,23 @@
 |---|---|
 | **Document ingestion** (`agent/ingest_to_openemr.py` + `document_extractor.py`) | Accepts a PDF/PNG, extracts structured JSON via Claude VLM, copies the source file into OpenEMR's document storage, writes facts into FHIR-exposed tables (prescriptions, lists, procedure_*, history_data, etc.), and links each fact back to its source via `derived_fact_citations`. |
 | **LangGraph supervisor** (`agent/clinical_graph.py`) | A supervisor + three workers (`intake_extractor`, `evidence_retriever`, `chart_lookup`). Workers always return to the supervisor; every transition is logged in `state["handoffs"]`. The supervisor decides termination — workers don't. |
-| **External-only RAG** (`agent/evidence_retriever.py` + `fetch_external_guidelines.py`) | The vector DB no longer indexes patient notes. It holds a 30-doc corpus fetched from OpenFDA (drug labels) and PubMed (guideline abstracts). 201 chunks indexed via hybrid BM25 (0.4) + dense (0.6). |
-| **`/chat` rewired** (`agent/app.py`) | The existing `/chat` endpoint now invokes `clinical_graph.run()` behind the W1 OAuth gate. The iframe UI doesn't change. Token usage and handoffs surface in the response. |
-| **Eval gate** (`agent/eval_clinical_graph.py` + CI) | 51 cases × boolean rubrics across 5 buckets. CI fails on regression below the per-bucket baseline. |
+| **External-only RAG** (`agent/evidence_retriever.py` + `fetch_external_guidelines.py`) | The vector DB no longer indexes patient notes. It holds a 30-doc corpus fetched from OpenFDA (drug labels) and PubMed (guideline abstracts). 201 chunks indexed via hybrid BM25 (0.4) + dense (0.6) → cross-encoder reranker → same-source diversity cap. |
+| **`/chat` rewired** (`agent/app.py`) | The existing `/chat` endpoint now invokes `clinical_graph.run()` behind the W1 OAuth gate. The iframe UI doesn't change. Token usage, total latency, and handoff trace surface in the response. |
+| **React patient dashboard** (`dashboard/`) | Vite + React + TS port of OpenEMR's demographics view: 12 widgets (Demographics, Patient Header, Medications, Allergies, Conditions, Encounters, Labs, Vitals, Insurance, Immunizations, Family History, Documents, Care Team) backed by FHIR R4 + four agent endpoints. Embedded into OpenEMR's `demographics.php` via a same-origin iframe. |
+| **Eval gate** (`agent/eval_clinical_graph.py` + CI) | 58 cases × boolean rubrics across 6 buckets. CI fails on regression below the per-bucket baseline. |
+
+---
+
+## Recent Improvements (Final-Submission Tightening)
+
+Four reviewer-driven changes after the initial W2 build, all still 58/58 in eval:
+
+| Improvement | Where | Eval impact |
+|---|---|---|
+| **Three-section evidence boundary** for clinical-management questions: `**CHART FINDINGS:**` / `**EVIDENCE:**` / `**CONSIDERATIONS FOR THE CLINICIAN:**`. Imperative verbs aimed at the patient are forbidden ("Start", "Stop", "Prescribe", "Add a", "Switch to", …); answers must end by deferring to the clinician. Auto-applied when the query matches management triggers ("should we", "what dose", "next step", "treat", "manage", …). | `clinical_graph.py` — `_MANAGEMENT_FORMAT`, `_is_management_question()`, `_ANSWER_SYSTEM` "EVIDENCE BOUNDARY" rule. | New `evidence_separation` bucket (8/8) — catches the soft over-recommendation pattern that the existing 10-case `safe_refusal` bucket missed. |
+| **Routing transparency in the UI**: every assistant reply shows a clickable "⚡ N tools" tag that toggles a routing-trace panel listing each handoff (`→ from->to — reason   Nms`). New `⏱ N.Ns` total-latency tag. | `app.py` enriched `tools_called` shape; `chat.html` `_renderRoutingTrace()` + collapsible `.routing-trace` panel. | Display-only, no eval impact. |
+| **Latency caps** — per-call SDK timeout (60s chat / 120s vision, `max_retries=1`) and 120s end-to-end wall-clock budget. Supervisor checks `deadline_ts` before each routing call; past it, forces `finish` and runs synthesis on whatever was collected. Synthesis catches `APITimeoutError`/`APIConnectionError` and returns a graceful message. | `clinical_graph.py` — `PER_CALL_TIMEOUT_S`, `TOTAL_BUDGET_S`, `state["deadline_ts"]`, `state["timed_out"]`. | F-07 (BNP-not-in-chart) went from 8070s → 12s. Full eval 769–805s end-to-end. |
+| **Retrieval quality** — 12-group synonym expansion (lipid, anticoagulation, diabetes, …) finds chunks that don't lexically match the query (e.g. a "statin" question lights up `fda_drug_atorvastatin.md`). Hard 2-per-source diversity cap so the LLM never sees three chunks from one FDA label when the corpus has 30 docs. | `evidence_retriever.py` — `_SYNONYM_GROUPS`, `_expand_query()`, `_diversify()`. | Same eval pass-rate, qualitatively more diverse evidence in retrieval traces. |
 
 ---
 
@@ -134,11 +148,20 @@ agent/
 │     pubmed_*.md  (10)           — PubMed guideline abstracts
 ├── sample_docs/                  — 4 fixture PDFs/PNGs (intake + lab × 4 patients)
 │
-├── eval_clinical_graph.py        — 51-case boolean-rubric suite
+├── eval_clinical_graph.py        — 58-case boolean-rubric suite
 ├── eval_baseline.json            — per-category pass-count gate
 │
+├── chat.html                     — embedded co-pilot UI with routing-trace panel
 ├── backfill_*.py                 — idempotent backfills for already-ingested data
 └── copy_docs_to_storage.py       — physical-file copy into OpenEMR storage
+
+dashboard/                          — React port of OpenEMR demographics view
+├── src/api/fhir/                  — typed FHIR fetchers + 4 agent endpoints
+│     patient.ts, allergy.ts, condition.ts, medication.ts, encounter.ts,
+│     lab.ts, vital.ts, coverage.ts, immunization.ts, family.ts,
+│     careteam.ts, document.ts
+├── src/widgets/                   — 12 cards (one per FHIR resource)
+└── src/App.tsx                    — sticky PatientHeader + grid of cards
 
 .github/workflows/
 └── agent-evals.yml               — spins up MariaDB, seeds 4 patients,
@@ -147,17 +170,18 @@ agent/
 
 ---
 
-## Eval Suite (51/51 passing)
+## Eval Suite (58/58 passing)
 
-5 buckets × ~10 cases each, all boolean rubrics:
+6 buckets, all boolean rubrics:
 
 | Bucket | Cases | What it tests | Determinism |
 |---|---|---|---|
-| Extraction | 10 | `extract_document()` returns expected verbatim values from each sample lab/intake doc | LLM (VLM, temp 0) |
-| Retrieval | 10 | `search_evidence()` top-1 is the expected file across the 30-doc external corpus | Pure code |
-| Citation | 11 | `derived_fact_citations` rows exist for every fact-bearing table for the four ingested patients; data-store boundary holds (C-11) | Pure SQL + import-graph walk |
-| Refusal | 10 | Graph declines unsafe / out-of-scope prompts | LLM |
-| Missing-data | 10 | Graph acknowledges absent values rather than fabricating | LLM |
+| `schema_valid` | 10 | `extract_document()` returns expected verbatim values from each sample lab/intake doc | LLM (VLM, temp 0) |
+| `citation_present` | 10 | `derived_fact_citations` rows exist for every fact-bearing table for the four ingested patients; data-store boundary holds | Pure SQL + import-graph walk |
+| `factually_consistent` | 10 | Top-1 retrieved file matches expected, and graph acknowledges absent values rather than fabricating | LLM + pure code |
+| `safe_refusal` | 10 | Graph declines unsafe / out-of-scope prompts (jailbreak, off-topic, "write a prescription", "order a surgery") | LLM |
+| `no_phi_in_logs` | 10 | Encounter logs scrub PHI; required structured fields (tool_sequence, latency_per_step_ms, tokens_used, cost_estimate_usd, retrieval_hits) are present | LLM + log assertion |
+| `evidence_separation` *(new)* | 8 | In-scope clinical-management questions present three-section answers without imperative commands. Catches the soft over-recommendation pattern that `safe_refusal` misses. | LLM |
 
 Run locally:
 ```bash
