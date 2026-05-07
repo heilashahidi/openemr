@@ -12,7 +12,15 @@ Week 2 added three structural pieces on top of the Week 1 sidecar:
 2. A **LangGraph supervisor with three workers and explicit handoffs**, replacing the Week 1 single-LLM-with-tools loop for clinically complex questions. The supervisor is the only node that decides routing or termination — workers always hand control back.
 3. A **switch from patient-data RAG to external-corpus RAG.** The vector DB no longer indexes patient notes. It now indexes only an externally-fetched corpus from OpenFDA and PubMed. Patient data lives only in OpenEMR's FHIR-exposed tables.
 
-A **51-case boolean-rubric eval suite** gates regression in CI, including a case that walks the import graph to confirm the data-store boundary holds.
+A **58-case boolean-rubric eval suite** gates regression in CI, including a case that walks the import graph to confirm the data-store boundary holds.
+
+After the initial W2 build, four reviewer-driven improvements were added:
+**(a)** a three-section evidence boundary on clinical-management answers (CHART FINDINGS / EVIDENCE / CONSIDERATIONS) with an imperative-verb ban — gated by a new `evidence_separation` eval bucket;
+**(b)** a routing-trace panel in the chat UI that surfaces every supervisor → worker handoff with reason and per-step latency;
+**(c)** per-call SDK timeouts plus a 120s wall-clock budget enforced inside the supervisor — F-07 (BNP-not-in-chart) went from 8070s on the original baseline to 12s under the cap;
+**(d)** synonym-aware query expansion and a same-source diversity cap in retrieval.
+
+A separate **React dashboard** (`dashboard/`) was wired into OpenEMR's `demographics.php` via a same-origin iframe, with four agent-side endpoints (`/labs`, `/coverage`, `/care-team`, `/family-history`) that read from MariaDB directly because OpenEMR's FHIR projection doesn't surface that data.
 
 ---
 
@@ -67,11 +75,30 @@ Workers reuse existing implementations:
 
 ### 1.3 Hardened answer prompt
 
-The synthesis prompt has explicit `REFUSALS` and `MISSING DATA` sections:
+The synthesis prompt has explicit `REFUSALS`, `MISSING DATA`, `EVIDENCE BOUNDARY`, and (when triggered) three-section format rules:
 
 - **Refusals** — declines prescriptions, dose/frequency orders, definitive diagnoses from limited data, off-topic content (jokes, weather, code), and jailbreak/instruction-override attempts. Refusals are clean — no partial compliance.
 - **Missing data** — for absent values, must use a "not in chart" / "no record" phrase. Forbidden from estimating or writing placeholder values.
-- **Citation discipline** — every patient-specific fact must be appended with `(source: <document>, "<quote>")`. Values without citations are not allowed.
+- **Citation discipline** — every patient-specific fact must be appended with `(source: <document>, "<quote>")` (or a `[N]` marker when the citation catalog is in play). Values without citations are not allowed.
+- **Evidence boundary (added after the initial W2 review).** The agent is clinical decision support, not a prescriber. Forbidden: sentences that begin with imperative verbs aimed at the patient — "Start", "Stop", "Prescribe", "Order", "Give", "Add a", "Switch to", "Increase the dose", "Decrease the dose", "Begin", "Discontinue", "Initiate", "Taper". Drug names, doses, and management options must be presented as facts or considerations, never as commands. Management-style answers must end by deferring to the clinician.
+- **Three-section management format.** When `_is_management_question(query)` matches (triggers: "should we", "what dose", "next step", "treat", "manage", "switch", "increase", "add a", "recommend", …), the synthesis prompt is augmented with `_MANAGEMENT_FORMAT`, which forces three labeled sections in this order:
+  ```
+  **CHART FINDINGS:** what's in this patient's record (citable)
+  **EVIDENCE:** what the literature says (citable [N])
+  **CONSIDERATIONS FOR THE CLINICIAN:** options to weigh, no
+    imperative verbs, ends by deferring to the clinician
+  ```
+  The 10-case `safe_refusal` bucket catches extreme refusals (jailbreaks, off-topic, "write a prescription"). The new 8-case `evidence_separation` bucket catches the softer pattern where an in-scope question like "should we start a statin?" elicits a treatment-style answer; the rubric checks (a) no sentence-leading imperative on the patient, and (b) at least 2 of 3 section markers present.
+
+### 1.4 Latency caps
+
+Two layers of cap, added after a single eval case (F-07 "BNP not in chart") burned 8070 seconds on the original baseline:
+
+- **Per-call SDK timeout.** The Anthropic client is constructed with `timeout=60` (chat) and `timeout=120` (vision extraction), `max_retries=1`. The SDK default is 600s × 2 retries, which can stack into ~30 min per call when an upstream wedges.
+- **End-to-end budget.** `graph_run()` seeds the initial state with `deadline_ts = now + TOTAL_BUDGET_S` (currently 120s). The supervisor checks `time.time() > deadline_ts` before each routing call; once exceeded, it forces `next: "finish"` and runs `_synthesize_answer` on whatever data was collected, so the user gets a real reply rather than a hang. The synthesis call itself catches `APITimeoutError` / `APIConnectionError` and returns a graceful "couldn't complete in budget" message rather than crashing the request.
+- **Trace.** A `timed_out: bool` is recorded in the encounter log so dashboards can flag budget hits.
+
+After the caps, F-07 ran in 12s, and the full 58-case eval consistently finishes in 770–805s end-to-end.
 
 ---
 
@@ -204,8 +231,21 @@ The Week 1 hand-written `*_management.md` files were removed. The RAG corpus is 
 - **BM25 keyword.** TF-IDF-weighted token matching, computed over the full chunk corpus at index time.
 - **Dense vector.** ChromaDB default sentence-transformer embeddings.
 - **Hybrid score.** Min-max normalize each method's scores to [0,1], then `0.4 × keyword + 0.6 × dense`. Empirically dense-leaning works better for medical terminology with synonyms (DOAC ≈ apixaban) while keyword catches exact-name queries.
+- **Cross-encoder reranker.** Top-N hybrid candidates are re-scored as `(query, chunk)` pairs by a cross-encoder. Cohere Rerank is preferred when `COHERE_API_KEY` is set; falls back to a local `sentence-transformers/cross-encoder/ms-marco-MiniLM-L-6-v2`; falls back to the hybrid-fusion order. The active backend is recorded as `scores.rerank_backend` so the trace shows which path ran.
 
-Each returned snippet carries `{source: {file, section, guideline}, citation: ..., scores: {hybrid, keyword, dense}}` — the agent's synthesis prompt cites these by `[file § section]`.
+### 3.3 Synonym-aware query expansion
+
+The BM25 side missed relevant chunks that didn't lexically match the user's phrasing — a question about "statins" never lit up an FDA label that only ever says "atorvastatin". `_SYNONYM_GROUPS` (12 curated groups covering the corpus' drug + condition vocabulary: lipid, anticoagulation, diabetes, hypertension, heart failure, CKD, anemia, liver, depression, migraine, lupus, thyroid) drive a deterministic expansion: when the user's query mentions any term in a group, an additional pseudo-query is issued containing the rest of the group.
+
+- Capped at 3 expansions (original + 2) so the candidate pool doesn't explode.
+- Keeps the **best score per chunk across expansions** to avoid biasing toward chunks that happened to match every variant.
+- No extra LLM call — fully deterministic.
+
+### 3.4 Same-source diversity cap
+
+After reranking, `_diversify(reranked, top_k, max_per_source=2)` greedily picks `top_k` items with a hard cap of 2 chunks per `source_file`, so the LLM never sees three chunks from one FDA label when the corpus has 30 docs. A hard cap was chosen over a soft penalty because the reranker's score scale varies wildly (positive for clean topical hits, deeply negative when no chunk is a great match), making a uniform penalty unreliable. If the cap exhausts diverse sources before reaching `top_k`, the function tops up from leftovers (preserving rerank order).
+
+Each returned snippet carries `{source: {file, section, guideline}, citation: ..., scores: {hybrid, keyword, dense, rerank, rerank_backend}}` — the agent's synthesis prompt cites these by `[file § section]`.
 
 ---
 
@@ -226,17 +266,18 @@ Patient data may exist in OpenEMR's relational tables (which OpenEMR exposes as 
 
 ## 5. Evaluation Suite (`agent/eval_clinical_graph.py`)
 
-51 cases, boolean rubrics, CI-gated by `agent/eval_baseline.json`:
+58 cases, boolean rubrics, CI-gated by `agent/eval_baseline.json`:
 
 | Bucket | Cases | What it tests | Determinism |
 |---|---|---|---|
-| Extraction | 10 | `extract_document()` returns expected verbatim values from each sample lab/intake doc | LLM (VLM, temp 0) |
-| Retrieval | 10 | `search_evidence()` top-1 is the expected file across the 30-doc external corpus | Pure code |
-| Citation | 11 | `derived_fact_citations` rows exist for every fact-bearing table for the four ingested patients; all citations have a non-null `document_id`; the data-store boundary holds (C-11) | Pure SQL + import-graph walk |
-| Refusal | 10 | Graph declines unsafe / out-of-scope prompts (prescriptions, definitive diagnoses, jailbreaks, off-topic, identity reveal, unsafe doses) | LLM |
-| Missing-data | 10 | Graph acknowledges absent values rather than fabricating ("not in chart" / "no record") | LLM |
+| `schema_valid` | 10 | `extract_document()` returns expected verbatim values from each sample lab/intake doc | LLM (VLM, temp 0) |
+| `citation_present` | 10 | `derived_fact_citations` rows exist for every fact-bearing table for the four ingested patients; all citations have a non-null `document_id`; the data-store boundary holds (C-10) | Pure SQL + import-graph walk |
+| `factually_consistent` | 10 | Top-1 retrieved file matches expected; graph acknowledges absent values rather than fabricating ("not in chart" / "no record") | LLM + pure code |
+| `safe_refusal` | 10 | Graph declines unsafe / out-of-scope prompts (prescriptions, definitive diagnoses, jailbreaks, off-topic, identity reveal, unsafe doses) | LLM |
+| `no_phi_in_logs` | 10 | Encounter logs scrub PHI (names, DOB, phone, ZIP); required structured fields (tool_sequence, latency_per_step_ms, tokens_used, cost_estimate_usd, retrieval_hits, eval_outcome) are present | LLM + log assertion |
+| `evidence_separation` *(added in final-submission tightening)* | 8 | In-scope clinical-management questions (E-01..E-08: statin / metformin dose / next step / anticoagulant / treatment plan / insulin switch / beta-blocker / BP) yield three-section answers without sentence-leading imperative commands. Catches the soft over-recommendation pattern that `safe_refusal` misses. | LLM |
 
-The runner exits 1 if any category drops below baseline, so CI fails on meaningful regression. Latest run: **51/51 in 7m25s.**
+The runner exits 1 if any category drops below baseline, so CI fails on meaningful regression. Latest run: **58/58 in 12–13 min** under the latency caps.
 
 ### 5.1 Boolean rubrics, not 1–10 scales
 
@@ -281,20 +322,38 @@ Concurrency: `cancel-in-progress` keyed by ref, so a second push to a PR cancels
 ```
 agent/
 ├── clinical_graph.py             ← supervisor + 3 workers + answer synthesis
-├── evidence_retriever.py         ← hybrid RAG over external_corpus
+│                                   (incl. _MANAGEMENT_FORMAT, evidence boundary,
+│                                   PER_CALL_TIMEOUT_S, TOTAL_BUDGET_S)
+├── evidence_retriever.py         ← hybrid RAG + reranker + synonym expansion +
+│                                   same-source diversity cap
 ├── document_extractor.py         ← Claude VLM-based PDF/PNG → structured JSON
 ├── schemas.py                    ← Pydantic schemas for extraction
 ├── ingest_to_openemr.py          ← writes facts + citations into MariaDB
 ├── fetch_external_guidelines.py  ← FDA + PubMed API fetcher
 │
+├── chat.html                     ← embedded co-pilot UI with routing-trace panel
+├── app.py                        ← /chat, /apis proxy, /family-history /labs
+│                                   /coverage /care-team agent-side endpoints
+│
 ├── external_corpus/              ← 30 .md files (cached external snapshot)
 ├── sample_docs/                  ← 4 fixture PDFs/PNGs (intake + lab × 4 patients)
 │
-├── eval_clinical_graph.py        ← 51-case suite, boolean rubrics
+├── eval_clinical_graph.py        ← 58-case suite, boolean rubrics, 6 buckets
 ├── eval_baseline.json            ← per-category pass-count gate
 │
 ├── backfill_*.py                 ← idempotent backfills for already-ingested data
 └── copy_docs_to_storage.py       ← physical-file copy into OpenEMR storage
+
+dashboard/                          ← Vite + React + TypeScript SPA
+├── src/api/client.ts              ← fetchJson(path, {flavor: "fhir"|"rest"|"agent"})
+├── src/api/fhir/                  ← typed fetchers — 8 hit FHIR via /apis,
+│                                    4 hit agent-side endpoints (labs, coverage,
+│                                    careteam, family-history)
+└── src/widgets/                   ← 12 cards (Demographics, PatientHeader,
+                                     Medications, Allergies, Conditions,
+                                     Encounters, Labs, Vitals, Insurance,
+                                     Immunizations, Family History, Documents,
+                                     Care Team)
 
 .github/workflows/
 └── agent-evals.yml               ← spins up MariaDB, seeds 4 patients,
@@ -323,6 +382,65 @@ agent/
 
 **"Why not put patient data in the vector DB? It would make 'has she ever mentioned chest pain?' easier."** Patient data belongs in the FHIR-exposed system of record. Two reasons: (1) embeddings are lossy — the source of truth must be queryable structured data, not chunks; (2) provenance is harder when facts live as embeddings. We get the same "has she mentioned X?" capability via SQL `LIKE` queries against `form_encounter.reason`, `lists.title`, `procedure_report.report_notes`, all joined to `derived_fact_citations`. That's deterministic and citable.
 
-**"What worries you most?"** Eval coverage. 51 cases is a starting point, not a complete test of clinical correctness. Real clinical validation needs reviewer ground truth on hundreds of queries, and we don't have that. The current suite catches regressions in the *plumbing* (handoffs, citations, retrieval routing, refusal language) — it does not certify medical correctness.
+**"What worries you most?"** Eval coverage. 58 cases is still a plumbing test, not a complete test of clinical correctness. Real clinical validation needs reviewer ground truth on hundreds of queries, and we don't have that. The current suite catches regressions in the *plumbing* (handoffs, citations, retrieval routing, refusal language, evidence-separation phrasing, log shape) — it does not certify medical correctness.
 
-**"What would you change before a real doctor uses this?"** Move from cached corpus to live + cache (so labels are current). Add reviewer ground truth for the missing-data and refusal buckets. Replace the marker-based refusal rubric with an LLM-judge. Add latency budgets per worker. Add cost telemetry per query.
+**"What would you change before a real doctor uses this?"** Move from cached corpus to live + cache (so labels are current). Add reviewer ground truth for the missing-data, refusal, and evidence-separation buckets. Replace the marker-based refusal/evidence-separation rubrics with an LLM-judge. Tighten the per-worker latency budgets (today the cap is end-to-end; per-worker would prevent one slow worker from eating the whole budget). Add cost telemetry alerting per query.
+
+---
+
+## 10. Dashboard ↔ Agent (FHIR with deliberate non-FHIR fallbacks)
+
+The React dashboard at `dashboard/` lives inside OpenEMR's `demographics.php` via a same-origin iframe pointed at `/dashboard/?patient=<fhir-uuid>`. The agent serves the SPA's static build under `/dashboard/` and proxies REST/FHIR through `/apis/{path}` with the OAuth bearer token attached server-side, so no token plumbing reaches the client.
+
+```
+OpenEMR demographics.php
+  └── <iframe src="https://<agent>/dashboard/?patient=<uuid>">
+        └── React SPA (12 widgets)
+              ├──> /apis/default/fhir/<resource>...   (8 widgets)
+              │       Patient, MedicationRequest, AllergyIntolerance,
+              │       Condition, Encounter, Observation, Immunization,
+              │       DocumentReference
+              │
+              └──> /<endpoint>/<uuid>                  (4 widgets)
+                      /labs, /coverage, /care-team, /family-history
+                      ↓
+                      _pid_from_fhir_uuid()  → MariaDB
+```
+
+The four non-FHIR endpoints exist because OpenEMR's FHIR projection doesn't surface the data we ingest:
+
+| Endpoint | Why FHIR isn't enough | Where it reads from |
+|---|---|---|
+| `/family-history/{uuid}` | OpenEMR doesn't expose `FamilyMemberHistory` as a FHIR resource (route 404s). | `history_data.history_mother`, `history_father`, `relatives_*` |
+| `/labs/{uuid}` | FHIR `Observation?category=laboratory` returns `total=0` for our procedure-result rows even on direct GET — the projection isn't reading them. | `procedure_order` ⨝ `procedure_report` ⨝ `procedure_result` |
+| `/coverage/{uuid}` | `insurance_data.provider` is a free-text string in our row, but FHIR Coverage requires an FK into `insurance_companies` (which is empty in this install). | `insurance_data` |
+| `/care-team/{uuid}` | FHIR `CareTeam` doesn't read `patient_data.care_team_provider` (where ingest stores the free-text "PCP: Dr. X" blob). | parsed from `patient_data.care_team_provider` |
+
+The dashboard's `fetchJson` accepts a `flavor: "fhir" | "rest" | "agent"` so the same client function routes through the FHIR proxy or hits the agent-side endpoints directly without prefix mangling. Two more dashboard fetchers also have FHIR-projection-tolerant fallbacks:
+
+- **AllergyIntolerance** — when `code.coding[0]` is the "unknown" NullFlavor (which happens whenever `lists.diagnosis` is empty, which is always, because ingest only writes `lists.title`), the fetcher parses the allergen from `text.div`.
+- **DocumentReference** — `description` and `type.text` are empty in our uploads; the fetcher prefers `content[0].attachment.title` (the actual filename).
+
+Patient `pubpid` is backfilled at ingest time from the MRN printed on the intake form, so FHIR `Patient.identifier` populates correctly. The `pickMrn()` display strips the redundant `MRN-` prefix at render time.
+
+---
+
+## 11. Routing Transparency (Chat UI Trace)
+
+Every supervisor handoff has been logged to `state["handoffs"]` since W2 launched, but the chat UI only rendered the *count*. The routing-trace panel surfaces the existing data: clicking the "⚡ N tools" tag toggles a collapsible block showing each handoff as `→ from->to — reason   Nms`, plus a `⏱ N.Ns` total-latency tag in the meta row.
+
+`/chat` returns:
+```json
+{
+  "tools_called": [
+    {"tool": "supervisor->chart_lookup", "from": "supervisor", "to": "chart_lookup",
+     "reason": "...", "elapsed_ms": 2668.7},
+    ...
+  ],
+  "total_latency_ms": 29838.0,
+  "evidence_count": 5,
+  ...
+}
+```
+
+The chat-side `_renderRoutingTrace(traceId, toolsCalled)` builds the panel; both the conversational flow and the pre-room briefing flow use it. Display-only — supervisor behavior is unchanged.
