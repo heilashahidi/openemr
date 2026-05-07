@@ -16,7 +16,15 @@ from schemas import (
     validate_lab_extraction, validate_intake_extraction,
 )
 
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+# Vision/document extraction can legitimately take longer than chat
+# (a multi-page PDF + 4096-token output), so we give it a wider per-call
+# timeout than the chat client. One retry is plenty — without this cap the
+# SDK default 600s × 2 retries = ~30 min worst case if the upstream wedges.
+client = Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+    timeout=120,
+    max_retries=1,
+)
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 

@@ -39,7 +39,7 @@ import re
 import time
 from typing import Annotated, Optional, TypedDict
 
-from anthropic import Anthropic
+from anthropic import Anthropic, APIConnectionError, APITimeoutError
 from langgraph.graph import END, START, StateGraph
 
 # Load .env so ANTHROPIC_API_KEY is available.
@@ -57,7 +57,18 @@ from ingest_to_openemr import run_sql
 from clinical_logger import log_encounter, estimate_cost_usd
 
 MODEL = "claude-sonnet-4-5"
-_client = Anthropic()
+
+# Latency caps. The previous full eval saw F-07 hang for 8070 seconds on a
+# single case — the SDK's default 600s timeout × default 2 retries can stack
+# up into ~30 min per call, and stuck retries inside the supervisor can
+# multiply that across handoffs. With 60s per call and 1 retry we cap a
+# single API attempt at ~120s; with TOTAL_BUDGET_S the supervisor forces
+# `finish` once the whole pipeline has been running too long.
+PER_CALL_TIMEOUT_S = 60
+PER_CALL_MAX_RETRIES = 1
+TOTAL_BUDGET_S = 120
+
+_client = Anthropic(timeout=PER_CALL_TIMEOUT_S, max_retries=PER_CALL_MAX_RETRIES)
 
 
 # ── State ──────────────────────────────────────────────────────────────────
@@ -88,6 +99,8 @@ class GraphState(TypedDict, total=False):
     handoffs: Annotated[list, _append]     # Audit trail of handoff decisions
     usage: Annotated[dict, _merge_usage]   # Token totals across all LLM calls
     next: Optional[str]                    # Supervisor's next-step decision
+    deadline_ts: Optional[float]           # Wall-clock deadline; supervisor forces finish past it
+    timed_out: Optional[bool]              # True when the run hit the budget
 
 
 # ── Supervisor ─────────────────────────────────────────────────────────────
@@ -457,12 +470,24 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
         extra_format = _MANAGEMENT_FORMAT
     system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + extra_format
 
-    resp = _client.messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        system=system,
-        messages=[{"role": "user", "content": "\n\n".join(parts)}],
-    )
+    try:
+        resp = _client.messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=system,
+            messages=[{"role": "user", "content": "\n\n".join(parts)}],
+        )
+    except (APITimeoutError, APIConnectionError) as exc:
+        # Graceful degradation when the SDK timeout fires (PER_CALL_TIMEOUT_S
+        # caps a single attempt, max_retries caps re-attempts). Return a
+        # non-empty answer so the chat UI doesn't show an empty bubble, and
+        # so eval cases that gate on "did we produce something" still work.
+        msg = (
+            "I couldn't complete this answer within the latency budget — "
+            "please retry or narrow the question. "
+            f"({type(exc).__name__})"
+        )
+        return msg, [], {}
     answer = resp.content[0].text.strip()
 
     # Only return the subset of catalog entries the model actually cited.
@@ -477,17 +502,33 @@ def supervisor(state: GraphState) -> GraphState:
     On a `finish` decision, run a separate synthesis call that sees the full
     unredacted state — keeps routing prompts cheap while ensuring the final
     answer never has to invent values from a truncated preview.
+
+    If the wall-clock deadline has passed, force `finish` immediately so the
+    pipeline doesn't spend additional API time. Synthesis still runs (so the
+    user gets a real answer from whatever data we did manage to collect),
+    but it operates inside the SDK per-call timeout rather than letting the
+    supervisor schedule yet another worker.
     """
     t0 = time.time()
-    resp = _client.messages.create(
-        model=MODEL,
-        max_tokens=512,
-        system=_SUPERVISOR_SYSTEM,
-        messages=[{"role": "user", "content": _state_summary(state)}],
-    )
-    decision = _parse_json(resp.content[0].text)
+    deadline = state.get("deadline_ts") or 0.0
+    over_budget = deadline and time.time() > deadline
 
-    usage = _usage_dict(resp)
+    if over_budget:
+        decision = {
+            "next": "finish",
+            "reason": f"deadline exceeded ({TOTAL_BUDGET_S}s budget); forcing finish",
+        }
+        usage: dict = {}
+    else:
+        resp = _client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=_SUPERVISOR_SYSTEM,
+            messages=[{"role": "user", "content": _state_summary(state)}],
+        )
+        decision = _parse_json(resp.content[0].text)
+        usage = _usage_dict(resp)
+
     update: GraphState = {
         "next": decision["next"],
         "handoffs": [{
@@ -498,6 +539,8 @@ def supervisor(state: GraphState) -> GraphState:
         }],
         "usage": usage,
     }
+    if over_budget:
+        update["timed_out"] = True
     if decision["next"] == "finish":
         answer, claims, syn_usage = _synthesize_answer(state)
         update["final_answer"] = answer
@@ -824,14 +867,19 @@ def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0
     confidence, and (if running under the eval suite) the eval outcome are
     captured for review without leaking PHI.
     """
-    initial: GraphState = {"query": query, "handoffs": [], "usage": {}}
+    t_total_start = time.time()
+    initial: GraphState = {
+        "query": query,
+        "handoffs": [],
+        "usage": {},
+        "deadline_ts": t_total_start + TOTAL_BUDGET_S,
+    }
     if file_path:
         initial["file_path"] = file_path
         initial["doc_type"] = doc_type or "intake_form"
     if patient_id:
         initial["patient_id"] = patient_id
 
-    t_total_start = time.time()
     result = GRAPH.invoke(initial)
     total_elapsed_ms = round((time.time() - t_total_start) * 1000, 1)
 
@@ -853,6 +901,7 @@ def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0
         "extraction_confidence": extracted.get("extraction_confidence"),
         "claims_count": len(result.get("claims") or []),
         "answer_length_chars": len(result.get("final_answer") or ""),
+        "timed_out": bool(result.get("timed_out")),
         "eval_outcome": eval_outcome,
     })
     return result
