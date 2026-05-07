@@ -29,5 +29,5 @@ export async function fetchRecentLabs(
   signal?: AbortSignal,
 ): Promise<LabRow[]> {
   const path = `/labs/${encodeURIComponent(patientId)}`;
-  return fetchJson<LabRow[]>(path, { signal });
+  return fetchJson<LabRow[]>(path, { signal, flavor: "agent" });
 }

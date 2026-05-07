@@ -26,5 +26,5 @@ export async function fetchFamilyHistory(
   // Same-origin agent endpoint, NOT the /apis FHIR proxy. The agent reads
   // history_data directly because no FHIR projection exists for it.
   const path = `/family-history/${encodeURIComponent(patientId)}`;
-  return fetchJson<FamilyHistoryRow[]>(path, { signal });
+  return fetchJson<FamilyHistoryRow[]>(path, { signal, flavor: "agent" });
 }

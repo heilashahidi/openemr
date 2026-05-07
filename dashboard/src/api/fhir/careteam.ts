@@ -22,5 +22,5 @@ export async function fetchCareTeam(
   signal?: AbortSignal,
 ): Promise<CareTeamRow[]> {
   const path = `/care-team/${encodeURIComponent(patientId)}`;
-  return fetchJson<CareTeamRow[]>(path, { signal });
+  return fetchJson<CareTeamRow[]>(path, { signal, flavor: "agent" });
 }

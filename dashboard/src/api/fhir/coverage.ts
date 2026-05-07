@@ -31,5 +31,5 @@ export async function fetchCoverages(
   signal?: AbortSignal,
 ): Promise<CoverageRow[]> {
   const path = `/coverage/${encodeURIComponent(patientId)}`;
-  return fetchJson<CoverageRow[]>(path, { signal });
+  return fetchJson<CoverageRow[]>(path, { signal, flavor: "agent" });
 }

@@ -41,8 +41,16 @@ export function getToken(): string | null {
 
 interface FetchOptions {
   signal?: AbortSignal;
-  /** REST endpoints under /apis/default/api; FHIR under /apis/default/fhir. */
-  flavor?: "fhir" | "rest";
+  /**
+   * Routing flavor:
+   *  - "fhir"  → /apis/default/fhir/<path>  (default, OpenEMR FHIR)
+   *  - "rest"  → /apis/default/api/<path>   (OpenEMR REST)
+   *  - "agent" → <path> (no prefix; used by agent-side endpoints like
+   *              /labs, /coverage, /care-team, /family-history that the
+   *              agent serves directly because OpenEMR's FHIR projection
+   *              doesn't surface the data we need).
+   */
+  flavor?: "fhir" | "rest" | "agent";
 }
 
 /**
@@ -57,7 +65,12 @@ interface FetchOptions {
 export async function fetchJson<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const token = getToken();
   const flavor = opts.flavor ?? "fhir";
-  const prefix = flavor === "rest" ? "/apis/default/api" : "/apis/default/fhir";
+  const prefix =
+    flavor === "agent"
+      ? ""
+      : flavor === "rest"
+        ? "/apis/default/api"
+        : "/apis/default/fhir";
   const url = `${BASE}${prefix}${path}`;
 
   const headers: Record<string, string> = {
