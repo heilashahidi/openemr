@@ -22,10 +22,18 @@ export interface DocumentRow {
 }
 
 function docTitle(d: DocumentReference): string {
-  // OpenEMR populates DocumentReference.description with the file name.
+  // Prefer (in order): the attachment filename (the most useful display
+  // for our PDFs), description, type.text, type.coding[0].display.
+  // OpenEMR's projection leaves description/type empty for our uploads
+  // and emits type.coding=[{code:"UNK", display:"unknown"}], so without
+  // the attachment.title fallback every link rendered as "unknown".
+  const filename = d.content?.[0]?.attachment?.title;
+  if (filename) return filename;
   if (d.description) return d.description;
   const t = d.type;
-  return t?.text ?? t?.coding?.[0]?.display ?? "Untitled document";
+  const display = t?.text ?? t?.coding?.[0]?.display;
+  if (display && display.toLowerCase() !== "unknown") return display;
+  return "Untitled document";
 }
 
 function docCategory(d: DocumentReference): string {
