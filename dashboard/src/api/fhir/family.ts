@@ -1,12 +1,12 @@
 /**
- * FHIR R4 FamilyMemberHistory fetcher.
+ * Family history fetcher.
  *
- * The legacy patient summary doesn't have a family-history card; that
- * data lives on the History form. This widget surfaces FHIR
- * FamilyMemberHistory entries so the dashboard shows them at-a-glance
- * alongside the other clinical context.
+ * OpenEMR does not expose FamilyMemberHistory as a FHIR resource — the
+ * route 404s. The data lives in OpenEMR's history_data table (free-text
+ * per-relation columns), and the agent surfaces it through a small JSON
+ * endpoint at /family-history/<uuid> that returns rows pre-shaped for
+ * this widget. Keeping the React side identical means no widget changes.
  */
-import type { Bundle, FamilyMemberHistory } from "fhir/r4";
 import { fetchJson } from "../client";
 
 export interface FamilyHistoryRow {
@@ -19,55 +19,12 @@ export interface FamilyHistoryRow {
   status: string;
 }
 
-function relationOf(f: FamilyMemberHistory): string {
-  const r = f.relationship;
-  if (!r) return "";
-  return r.text ?? r.coding?.[0]?.display ?? "";
-}
-
-function conditionsOf(f: FamilyMemberHistory): string {
-  const cs = f.condition ?? [];
-  return cs
-    .map((c) => c.code?.text ?? c.code?.coding?.[0]?.display ?? "")
-    .filter(Boolean)
-    .join(", ");
-}
-
-function statusOf(f: FamilyMemberHistory): string {
-  const parts: string[] = [];
-  // FHIR distinguishes deceasedBoolean / deceasedAge / deceasedDate.
-  const dec =
-    f.deceasedBoolean !== undefined
-      ? f.deceasedBoolean
-        ? "deceased"
-        : "alive"
-      : f.deceasedAge?.value
-        ? `deceased age ${f.deceasedAge.value}`
-        : f.deceasedDate
-          ? `deceased ${f.deceasedDate.slice(0, 10)}`
-          : "";
-  if (dec) parts.push(dec);
-  if (f.ageAge?.value && !parts.length) parts.push(`age ${f.ageAge.value}`);
-  return parts.join(", ");
-}
-
 export async function fetchFamilyHistory(
   patientId: string,
   signal?: AbortSignal,
 ): Promise<FamilyHistoryRow[]> {
-  const path = `/FamilyMemberHistory?patient=${encodeURIComponent(patientId)}`;
-  const bundle = await fetchJson<Bundle>(path, { signal });
-  const entries = bundle.entry ?? [];
-
-  return entries
-    .map((e) => e.resource as FamilyMemberHistory | undefined)
-    .filter(
-      (f): f is FamilyMemberHistory => f?.resourceType === "FamilyMemberHistory",
-    )
-    .map((f): FamilyHistoryRow => ({
-      id: f.id ?? `f_${Math.random().toString(36).slice(2, 10)}`,
-      relation: relationOf(f),
-      conditions: conditionsOf(f) || "(no conditions reported)",
-      status: statusOf(f),
-    }));
+  // Same-origin agent endpoint, NOT the /apis FHIR proxy. The agent reads
+  // history_data directly because no FHIR projection exists for it.
+  const path = `/family-history/${encodeURIComponent(patientId)}`;
+  return fetchJson<FamilyHistoryRow[]>(path, { signal });
 }

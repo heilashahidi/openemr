@@ -383,3 +383,70 @@ async def openemr_api_proxy(rest_path: str, request: Request):
     )
     media = resp.headers.get("content-type", "application/json")
     return Response(content=resp.content, status_code=resp.status_code, media_type=media)
+
+
+# OpenEMR doesn't expose FamilyMemberHistory as a FHIR resource (the route
+# returns 404). The data lives in `history_data` (one row per patient) with
+# free-text columns: history_mother, history_father, and relatives_*. This
+# endpoint reads those columns and returns a small array shaped like the
+# dashboard's FamilyHistoryRow so the widget renders cleanly.
+@app.get("/family-history/{patient_uuid}")
+def family_history(patient_uuid: str):
+    pid = _pid_from_fhir_uuid(patient_uuid)
+    if pid is None:
+        return []
+
+    cols = [
+        ("history_mother", "Mother"),
+        ("history_father", "Father"),
+        ("relatives_cancer", "Relatives — cancer"),
+        ("relatives_diabetes", "Relatives — diabetes"),
+        ("relatives_high_blood_pressure", "Relatives — hypertension"),
+        ("relatives_heart_problems", "Relatives — heart disease"),
+        ("relatives_stroke", "Relatives — stroke"),
+        ("relatives_epilepsy", "Relatives — epilepsy"),
+        ("relatives_mental_illness", "Relatives — mental illness"),
+        ("relatives_suicide", "Relatives — suicide"),
+        ("relatives_tuberculosis", "Relatives — tuberculosis"),
+    ]
+    select_list = ", ".join(c for c, _ in cols)
+    out = _run_sql(f"SELECT {select_list} FROM history_data WHERE pid={pid} LIMIT 1;") or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) < 2:
+        return []
+    values = lines[1].split("\t")
+
+    rows: list[dict] = []
+    for i, (_, label) in enumerate(cols):
+        v = values[i] if i < len(values) else ""
+        if not v or v.strip() in ("NULL", ""):
+            continue
+        cond, status = _split_conditions_status(v)
+        rows.append({
+            "id": f"fh_{pid}_{i}",
+            "relation": label,
+            "conditions": cond or "(no conditions reported)",
+            "status": status,
+        })
+    return rows
+
+
+def _split_conditions_status(v: str) -> tuple[str, str]:
+    """Split "<conditions> (<status>)" into (conditions, status).
+
+    The status itself can contain nested parentheses (e.g.
+    "Deceased age 81 (natural)"), so a simple rfind('(') would leak the
+    inner closing paren into status. Walk backwards from the trailing ')'
+    matching depth to find the OUTER opening paren.
+    """
+    if not v.endswith(")"):
+        return v.strip(), ""
+    depth = 0
+    for i in range(len(v) - 1, -1, -1):
+        if v[i] == ")":
+            depth += 1
+        elif v[i] == "(":
+            depth -= 1
+            if depth == 0:
+                return v[:i].strip(), v[i + 1 : -1].strip()
+    return v.strip(), ""
