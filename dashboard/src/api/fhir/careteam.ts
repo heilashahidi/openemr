@@ -1,13 +1,12 @@
 /**
- * FHIR R4 CareTeam fetcher.
+ * Care Team fetcher.
  *
- * Returns participants with role + name. The legacy patient summary
- * doesn't have a CareTeam card on `demographics.php`; the requirement
- * called it out explicitly so we surface FHIR CareTeam directly. Empty
- * patients render the "Nothing recorded" branch — honest per the
- * "live data from the FHIR API" rule.
+ * OpenEMR's FHIR CareTeam endpoint exists but doesn't read the data we
+ * actually populate during ingestion (`patient_data.care_team_provider`,
+ * the free-text "Primary Care Physician: Dr. X / Cardiologist: Dr. Y"
+ * blob). The agent parses that text into one row per provider and
+ * exposes it at /care-team/<uuid>.
  */
-import type { Bundle, CareTeam } from "fhir/r4";
 import { fetchJson } from "../client";
 
 export interface CareTeamRow {
@@ -18,39 +17,10 @@ export interface CareTeamRow {
   role: string;
 }
 
-function participantName(p: CareTeam["participant"] extends (infer U)[] | undefined ? U : never): string {
-  return p?.member?.display ?? "";
-}
-
-function participantRole(p: CareTeam["participant"] extends (infer U)[] | undefined ? U : never): string {
-  const role = p?.role?.[0];
-  return role?.text ?? role?.coding?.[0]?.display ?? "";
-}
-
 export async function fetchCareTeam(
   patientId: string,
   signal?: AbortSignal,
 ): Promise<CareTeamRow[]> {
-  const path = `/CareTeam?patient=${encodeURIComponent(patientId)}&status=active`;
-  const bundle = await fetchJson<Bundle>(path, { signal });
-  const entries = bundle.entry ?? [];
-
-  const rows: CareTeamRow[] = [];
-  for (const e of entries) {
-    const ct = e.resource as CareTeam | undefined;
-    if (ct?.resourceType !== "CareTeam") continue;
-    const participants = ct.participant ?? [];
-    for (let i = 0; i < participants.length; i++) {
-      const p = participants[i];
-      const name = participantName(p);
-      const role = participantRole(p);
-      if (!name && !role) continue;
-      rows.push({
-        id: `${ct.id ?? "ct"}_${i}`,
-        name: name || "Unnamed provider",
-        role,
-      });
-    }
-  }
-  return rows;
+  const path = `/care-team/${encodeURIComponent(patientId)}`;
+  return fetchJson<CareTeamRow[]>(path, { signal });
 }

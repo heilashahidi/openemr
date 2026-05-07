@@ -431,6 +431,144 @@ def family_history(patient_uuid: str):
     return rows
 
 
+# OpenEMR's FHIR Observation projection doesn't surface our procedure_result
+# rows (returns total=0 even for a direct GET on the result UUID — broken
+# even for the seeded demo patient). Read the data directly so the labs
+# card has something to render.
+@app.get("/labs/{patient_uuid}")
+def labs(patient_uuid: str):
+    pid = _pid_from_fhir_uuid(patient_uuid)
+    if pid is None:
+        return []
+    out = _run_sql(
+        "SELECT pres.procedure_result_id, pres.result_text, pres.result, "
+        "pres.units, pres.abnormal, prep.date_collected "
+        "FROM procedure_result pres "
+        "JOIN procedure_report prep ON pres.procedure_report_id=prep.procedure_report_id "
+        "JOIN procedure_order po ON prep.procedure_order_id=po.procedure_order_id "
+        f"WHERE po.patient_id={pid} ORDER BY prep.date_collected DESC LIMIT 50;"
+    ) or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) < 2:
+        return []
+
+    abnormal_codes = {"H", "HH", "L", "LL", "A", "AA"}
+    rows: list[dict] = []
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        rid, title, value, units, flag, date = parts[:6]
+        title = title.strip()
+        value = value.strip()
+        units = units.strip()
+        flag = (flag or "").strip()
+        date = (date or "").strip()
+        if date in ("NULL", ""):
+            date_iso = ""
+        else:
+            date_iso = date.split(" ")[0]
+        value_with_unit = f"{value} {units}".strip() if units else value
+        rows.append({
+            "id": f"lab_{rid}",
+            "title": title or "Unknown test",
+            "value_with_unit": value_with_unit,
+            "flag": flag,
+            "date": date_iso,
+            "is_abnormal": flag in abnormal_codes,
+        })
+    return rows
+
+
+# OpenEMR's FHIR Coverage requires insurance_data.provider to be an integer
+# FK into insurance_companies — but the table is empty in this install, so
+# Coverage searches return total=0 even for Chen's seeded insurance row.
+# Read insurance_data directly.
+@app.get("/coverage/{patient_uuid}")
+def coverage(patient_uuid: str):
+    pid = _pid_from_fhir_uuid(patient_uuid)
+    if pid is None:
+        return []
+    out = _run_sql(
+        "SELECT id, type, provider, plan_name, policy_number, group_number, "
+        "copay, accept_assignment, date, date_end "
+        f"FROM insurance_data WHERE pid={pid} ORDER BY FIELD(type,'primary','secondary','tertiary');"
+    ) or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) < 2:
+        return []
+
+    rows: list[dict] = []
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) < 10:
+            continue
+        cid, ctype, provider, plan, policy, group, copay, accept, date, date_end = parts[:10]
+        def clean(s: str) -> str:
+            s = (s or "").strip()
+            return "" if s == "NULL" else s
+        rows.append({
+            "id": f"cov_{cid}",
+            "type": clean(ctype) or "primary",
+            "insurer_name": clean(provider),
+            "plan_name": clean(plan),
+            "policy_number": clean(policy),
+            "group_number": clean(group),
+            "copay": clean(copay),
+            "accept_assignment": clean(accept),
+            "date": clean(date).split(" ")[0],
+            "date_end": clean(date_end).split(" ")[0],
+        })
+    return rows
+
+
+# FHIR CareTeam returns an empty Bundle for our patients — OpenEMR's
+# projection doesn't read patient_data.care_team_provider, where ingest
+# stores the free-text "PCP: Dr. X / Cardiologist: Dr. Y" string from the
+# intake form. Parse that into one row per provider.
+@app.get("/care-team/{patient_uuid}")
+def care_team(patient_uuid: str):
+    pid = _pid_from_fhir_uuid(patient_uuid)
+    if pid is None:
+        return []
+    out = _run_sql(
+        f"SELECT care_team_provider FROM patient_data WHERE pid={pid} LIMIT 1;"
+    ) or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) < 2:
+        return []
+    blob = lines[1].strip()
+    if not blob or blob == "NULL":
+        return []
+
+    # Free text shaped like "Primary Care Physician: Dr. Anjali Rao, MD -
+    # Berkeley Family Medical Group, PCP NPI 1659302147" possibly with
+    # multiple providers separated by ' / ' or newlines. Split on those,
+    # then split each segment on the FIRST ':' into role:name.
+    segments: list[str] = []
+    for chunk in blob.replace("\n", " / ").split(" / "):
+        segments.extend(s.strip() for s in chunk.split(";") if s.strip())
+
+    rows: list[dict] = []
+    for i, seg in enumerate(segments):
+        if not seg:
+            continue
+        if ":" in seg:
+            role, name = seg.split(":", 1)
+            role = role.strip()
+            name = name.strip()
+        else:
+            role, name = "Provider", seg
+        if not name:
+            continue
+        rows.append({
+            "id": f"ct_{pid}_{i}",
+            "name": name,
+            "role": role or "Provider",
+        })
+    return rows
+
+
 def _split_conditions_status(v: str) -> tuple[str, str]:
     """Split "<conditions> (<status>)" into (conditions, status).
 
