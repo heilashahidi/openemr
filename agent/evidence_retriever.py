@@ -283,11 +283,128 @@ def _local_reranker():
         return None
 
 
+# Lightweight synonym groups — when the user's query mentions any term in
+# a group, an additional pseudo-query containing the rest of the group is
+# issued and unioned into the candidate pool. Helps the BM25 side find
+# relevant chunks that don't lexically overlap with the question (e.g. a
+# question about "statins" matches an FDA label that only ever says
+# "atorvastatin"). Cheap and deterministic — no extra LLM call.
+_SYNONYM_GROUPS: list[set[str]] = [
+    # Lipid-lowering
+    {"statin", "statins", "atorvastatin", "rosuvastatin", "pravastatin",
+     "simvastatin", "hmg-coa", "ldl", "hyperlipidemia", "dyslipidemia"},
+    # Anticoagulation / AFib
+    {"doac", "anticoagulant", "anticoagulation", "blood thinner",
+     "apixaban", "rivaroxaban", "dabigatran", "warfarin", "afib",
+     "atrial fibrillation", "stroke prevention", "chads", "cha2ds2"},
+    # Diabetes
+    {"diabetes", "diabetic", "t2dm", "hba1c", "a1c", "glycemic",
+     "metformin", "ozempic", "semaglutide", "empagliflozin", "sglt2",
+     "glp-1", "insulin"},
+    # Hypertension
+    {"hypertension", "high blood pressure", "bp", "ace inhibitor",
+     "lisinopril", "losartan", "amlodipine", "carvedilol", "arb",
+     "thiazide", "beta-blocker", "beta blocker"},
+    # Heart failure
+    {"heart failure", "hfref", "hfpef", "ejection fraction", "bnp",
+     "nt-probnp", "furosemide", "diuretic", "carvedilol"},
+    # CKD / labs
+    {"ckd", "chronic kidney disease", "egfr", "creatinine", "proteinuria",
+     "albuminuria", "renal"},
+    # Anemia
+    {"anemia", "hemoglobin", "hematocrit", "iron deficiency", "ferritin",
+     "mcv"},
+    # Liver
+    {"alt", "ast", "transaminitis", "hepatic", "liver function",
+     "lft", "bilirubin"},
+    # Depression / mental health
+    {"depression", "ssri", "sertraline", "duloxetine", "phq", "anxiety"},
+    # Migraine
+    {"migraine", "headache", "sumatriptan", "topiramate", "triptan"},
+    # Lupus / autoimmune
+    {"lupus", "sle", "hydroxychloroquine", "ana", "autoimmune"},
+    # Thyroid
+    {"thyroid", "hypothyroid", "levothyroxine", "tsh"},
+]
+
+
+def _expand_query(query: str) -> list[str]:
+    """Return the original query plus up to 2 expansion strings derived
+    from synonym groups whose terms appear in the query. Short circuits
+    on the empty string and dedupes — never returns more than 3 queries
+    so the candidate pool doesn't explode.
+    """
+    q = query or ""
+    if not q.strip():
+        return []
+    qlower = q.lower()
+    expansions: list[str] = [q]
+    seen_groups: set[int] = set()
+    for i, group in enumerate(_SYNONYM_GROUPS):
+        if i in seen_groups:
+            continue
+        if any(term in qlower for term in group):
+            seen_groups.add(i)
+            # Build a synonym blob excluding terms already in the query
+            extras = [t for t in group if t not in qlower]
+            if extras:
+                expansions.append(q + " " + " ".join(sorted(extras)))
+        if len(expansions) >= 3:
+            break
+    return expansions
+
+
+def _diversify(
+    reranked: list[tuple],
+    top_k: int,
+    max_per_source: int = 2,
+) -> list[tuple]:
+    """Greedy pick of top_k items with a hard cap of `max_per_source`
+    chunks from any one source_file, so the answer never quotes three
+    chunks from a single FDA label when the corpus has 30 docs.
+
+    The reranker's score scale varies dramatically between weak and
+    strong matches (positive for clean topical hits, deeply negative
+    when no chunk is a great match), so a soft penalty was unreliable.
+    A hard cap is predictable and easy to reason about; once the cap
+    is reached, the source is removed from the pool. If we run out of
+    diverse sources before reaching top_k, we fall back to filling from
+    the remaining (capped) pool.
+    """
+    if not reranked:
+        return []
+    chosen: list[tuple] = []
+    chosen_files: Counter = Counter()
+    leftovers: list[tuple] = []
+    for item in reranked:
+        if len(chosen) >= top_k:
+            break
+        src = item[0].source_file
+        if chosen_files[src] >= max_per_source:
+            leftovers.append(item)
+            continue
+        chosen.append(item)
+        chosen_files[src] += 1
+    # If we couldn't fill top_k with diverse sources, top up from the
+    # leftovers (which preserve rerank order).
+    if len(chosen) < top_k:
+        for item in leftovers:
+            if len(chosen) >= top_k:
+                break
+            chosen.append(item)
+    return chosen
+
+
 def search_evidence(query: str, top_k: int = 5, candidate_pool: int = 20) -> list[dict]:
     """
     Hybrid search + reranker: BM25 keyword + dense vector candidates,
     then a cross-encoder reranker scores each (query, chunk) pair and
     only the top-k grounded snippets are returned.
+
+    Now also runs synonym-expanded pseudo-queries to find chunks that
+    don't lexically match the original question, and applies a same-source
+    diversity penalty after reranking so the LLM sees evidence from
+    multiple guidelines rather than three chunks from one FDA label.
 
     Returns list of evidence snippets with source metadata and scores
     (kw, dense, hybrid, rerank, backend).
@@ -299,30 +416,39 @@ def search_evidence(query: str, top_k: int = 5, candidate_pool: int = 20) -> lis
     if not _chunks:
         return []
 
-    # ── Stage 1: candidate generation (sparse + dense) ──
-    keyword_results = _keyword_search(query, top_k=candidate_pool)
-    dense_results = _dense_search(query, top_k=candidate_pool)
+    chunk_map = {c.chunk_id: c for c in _chunks}
 
-    # Normalize scores to 0-1 range
+    # ── Stage 1: candidate generation (sparse + dense), unioned across
+    # synonym-expanded pseudo-queries. We keep the BEST score per chunk
+    # across the expansions to avoid biasing the candidate pool toward
+    # chunks that happened to match every variant.
+    queries = _expand_query(query)
+
     def normalize(results):
         if not results:
             return {}
-        max_score = max(s for _, s in results) if results else 1
-        min_score = min(s for _, s in results) if results else 0
-        range_score = max_score - min_score if max_score > min_score else 1
-        return {c.chunk_id: (s - min_score) / range_score for c, s in results}
+        max_s = max(s for _, s in results) if results else 1
+        min_s = min(s for _, s in results) if results else 0
+        rng = max_s - min_s if max_s > min_s else 1
+        return {c.chunk_id: (s - min_s) / rng for c, s in results}
 
-    kw_scores = normalize(keyword_results)
-    dense_scores = normalize(dense_results)
+    agg_kw: dict[str, float] = {}
+    agg_dense: dict[str, float] = {}
+    for q in queries:
+        kw = normalize(_keyword_search(q, top_k=candidate_pool))
+        dn = normalize(_dense_search(q, top_k=candidate_pool))
+        for cid, s in kw.items():
+            agg_kw[cid] = max(agg_kw.get(cid, 0), s)
+        for cid, s in dn.items():
+            agg_dense[cid] = max(agg_dense.get(cid, 0), s)
 
     # Combine: weighted average (keyword 0.4, dense 0.6) for candidate ranking.
-    all_chunk_ids = set(kw_scores.keys()) | set(dense_scores.keys())
-    chunk_map = {c.chunk_id: c for c in _chunks}
+    all_chunk_ids = set(agg_kw.keys()) | set(agg_dense.keys())
 
     candidates = []
     for cid in all_chunk_ids:
-        kw = kw_scores.get(cid, 0)
-        dense = dense_scores.get(cid, 0)
+        kw = agg_kw.get(cid, 0)
+        dense = agg_dense.get(cid, 0)
         hybrid_score = 0.4 * kw + 0.6 * dense
         if cid in chunk_map:
             candidates.append((chunk_map[cid], hybrid_score, kw, dense))
@@ -330,8 +456,11 @@ def search_evidence(query: str, top_k: int = 5, candidate_pool: int = 20) -> lis
     candidates.sort(key=lambda x: x[1], reverse=True)
     candidates = candidates[:candidate_pool]
 
-    # ── Stage 2: rerank the top candidates with a cross-encoder ──
-    reranked = _rerank_candidates(query, candidates, top_k=top_k)
+    # ── Stage 2: rerank the top candidates with a cross-encoder, then
+    # apply a same-source diversity penalty so we don't surface 3 chunks
+    # from one FDA label when the corpus has 30 docs.
+    reranked = _rerank_candidates(query, candidates, top_k=candidate_pool)
+    reranked = _diversify(reranked, top_k=top_k)
 
     # ── Build the response — only the top reranked snippets reach the LLM ──
     results = []
