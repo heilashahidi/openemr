@@ -580,10 +580,34 @@
   }
 
   .meta-tag.tools { background: var(--accent-dim); color: var(--accent); }
+  .meta-tag.tools.clickable { cursor: pointer; user-select: none; }
+  .meta-tag.tools.clickable:hover { filter: brightness(1.15); }
   .meta-tag.citations { background: var(--green-dim); color: var(--green); }
   .meta-tag.tokens { background: var(--amber-dim); color: var(--amber); }
+  .meta-tag.latency { background: rgba(148,163,184,0.15); color: var(--text-soft, #94a3b8); }
   .meta-tag.verified { background: var(--green-dim); color: var(--green); }
   .meta-tag.unverified { background: rgba(239,68,68,0.12); color: var(--red); }
+
+  /* Routing-trace panel — shows supervisor → worker handoffs with the
+     reason and per-step latency. Toggled by clicking the "⚡ N tools" tag. */
+  .routing-trace {
+    display: none;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--text-soft, #94a3b8);
+  }
+  .routing-trace.open { display: block; }
+  .routing-trace .step { display: flex; gap: 6px; align-items: baseline; }
+  .routing-trace .step .arrow { color: var(--accent); width: 8px; flex-shrink: 0; }
+  .routing-trace .step .pair { color: var(--text); }
+  .routing-trace .step .ms { margin-left: auto; opacity: 0.7; }
+  .routing-trace .step .reason { font-style: italic; opacity: 0.85; }
 
   /* Typing */
   .typing { align-self: flex-start; display: none; }
@@ -875,15 +899,20 @@ async function onPatientSelect() {
         </div>`;
     }
 
-    // Meta row
+    // Meta row + collapsible routing trace
+    const briefingTraceId = `trace-brief-${Date.now()}`;
     html += `<div class="brief-meta-row">`;
-    html += `<span class="meta-tag tools">⚡ ${data.tools_called.length} tools</span>`;
+    html += `<span class="meta-tag tools clickable" onclick="document.getElementById('${briefingTraceId}').classList.toggle('open')" title="Click to show routing trace">⚡ ${data.tools_called.length} tools</span>`;
     html += `<span class="meta-tag citations">📎 ${data.citations.length} cited</span>`;
     html += `<span class="meta-tag tokens">🔤 ${data.tokens_used.total} tokens</span>`;
+    if (data.total_latency_ms) {
+      html += `<span class="meta-tag latency">⏱ ${(data.total_latency_ms / 1000).toFixed(1)}s</span>`;
+    }
     html += data.verified
       ? `<span class="meta-tag verified">✓ Verified</span>`
       : `<span class="meta-tag unverified">⚠ Unverified</span>`;
     html += `</div>`;
+    html += _renderRoutingTrace(briefingTraceId, data.tools_called);
 
     cards.innerHTML = html;
     cards.style.display = 'block';
@@ -1099,6 +1128,23 @@ function closeCitation() {
   setTimeout(() => { document.getElementById('citeFrame').src = 'about:blank'; }, 220);
 }
 
+// Build the supervisor-routing trace panel. Each handoff is rendered as
+// "→ from → to (reason) Nms". Hidden by default; the "⚡ N tools" meta
+// tag toggles it. Lets the user see exactly which workers ran and why.
+function _renderRoutingTrace(traceId, toolsCalled) {
+  if (!toolsCalled || !toolsCalled.length) return '';
+  const escape = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+  const steps = toolsCalled.map((t) => {
+    const label = t.tool || `${t.from || '?'}->${t.to || '?'}`;
+    const ms = t.elapsed_ms ? `${Math.round(t.elapsed_ms)}ms` : '';
+    const reason = t.reason ? ` <span class="reason">— ${escape(t.reason)}</span>` : '';
+    return `<div class="step"><span class="arrow">→</span><span class="pair">${escape(label)}</span>${reason}<span class="ms">${ms}</span></div>`;
+  }).join('');
+  return `<div id="${traceId}" class="routing-trace">${steps}</div>`;
+}
+
 function addMessage(role, content, meta = null, claims = null) {
   const chatArea = document.getElementById('chatArea');
   const welcome = document.getElementById('chatWelcome');
@@ -1123,11 +1169,17 @@ function addMessage(role, content, meta = null, claims = null) {
     });
 
   let metaHtml = '';
+  let traceHtml = '';
   if (meta) {
+    const traceId = `trace-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     metaHtml = '<div class="message-meta">';
-    if (meta.tools_called) metaHtml += `<span class="meta-tag tools">⚡ ${meta.tools_called.length} tools</span>`;
+    if (meta.tools_called && meta.tools_called.length) {
+      metaHtml += `<span class="meta-tag tools clickable" onclick="document.getElementById('${traceId}').classList.toggle('open')" title="Click to show routing trace">⚡ ${meta.tools_called.length} tools</span>`;
+      traceHtml = _renderRoutingTrace(traceId, meta.tools_called);
+    }
     if (meta.citations !== undefined) metaHtml += `<span class="meta-tag citations">📎 ${meta.citations} cited</span>`;
     if (meta.tokens) metaHtml += `<span class="meta-tag tokens">🔤 ${meta.tokens}</span>`;
+    if (meta.total_latency_ms) metaHtml += `<span class="meta-tag latency">⏱ ${(meta.total_latency_ms / 1000).toFixed(1)}s</span>`;
     if (meta.verified !== undefined) {
       metaHtml += meta.verified
         ? `<span class="meta-tag verified">✓ Verified</span>`
@@ -1136,7 +1188,7 @@ function addMessage(role, content, meta = null, claims = null) {
     metaHtml += '</div>';
   }
 
-  div.innerHTML = `<div class="message-content">${html}</div>${metaHtml}`;
+  div.innerHTML = `<div class="message-content">${html}</div>${metaHtml}${traceHtml}`;
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -1177,6 +1229,7 @@ async function sendMessage() {
       tools_called: data.tools_called,
       citations: data.citations ? data.citations.length : 0,
       tokens: data.tokens_used ? data.tokens_used.total : 0,
+      total_latency_ms: data.total_latency_ms || 0,
       verified: data.verified,
     }, data.claims);
   } catch (err) {

@@ -125,6 +125,11 @@ class ChatResponse(BaseModel):
     tools_called: list
     tokens_used: dict
     verified: bool
+    # Total wall-clock time the supervisor spent producing this answer.
+    # Surfaced so the chat UI can render a routing-trace footer showing
+    # supervisor → worker handoffs with their per-step latency.
+    total_latency_ms: float = 0.0
+    evidence_count: int = 0
 
 
 def _pid_from_fhir_uuid(fhir_uuid: str) -> Optional[int]:
@@ -205,10 +210,14 @@ async def chat(req: ChatRequest):
     tools_called = [
         {
             "tool": f"{h.get('from')}->{h.get('to')}",
+            "from": h.get("from", ""),
+            "to": h.get("to", ""),
             "reason": h.get("reason", ""),
+            "elapsed_ms": h.get("elapsed_ms", 0),
         }
         for h in handoffs
     ]
+    total_latency_ms = sum(h.get("elapsed_ms", 0) or 0 for h in handoffs)
 
     # The W2 synthesis prompt enforces citation discipline; we surface the
     # boolean so the UI can still render the verification badge.
@@ -226,6 +235,8 @@ async def chat(req: ChatRequest):
             "total": usage.get("total", 0),
         },
         verified=verified,
+        total_latency_ms=round(total_latency_ms, 1),
+        evidence_count=len(evidence),
     )
 
 
