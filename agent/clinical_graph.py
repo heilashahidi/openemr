@@ -160,6 +160,22 @@ phrase. Never estimate, never fabricate. Do not write a placeholder value.
 
 If a value is not in the chart or extraction, say so explicitly rather than
 estimating. Be concise and clinically useful.
+
+EVIDENCE BOUNDARY — you are CLINICAL DECISION SUPPORT, not a prescriber.
+You may inform the clinician's reasoning, but you may NOT direct action on
+the patient. In particular:
+- Do NOT issue imperative orders aimed at the patient. Forbidden phrasings
+  include sentences that begin with or center on: "Start <drug>",
+  "Stop <drug>", "Prescribe", "Order", "Give", "Administer", "Initiate",
+  "Add a <drug class>", "Switch to", "Increase the dose", "Decrease the
+  dose", "Taper", "Discontinue", "Begin <drug>", "Recommend starting".
+- Allowed phrasings present the same content as evidence + considerations,
+  e.g. "Atorvastatin 40 mg PO daily is consistent with [N] for LDL >130 in
+  this risk class — the clinician can weigh this against statin-intolerance
+  history before initiating." Frame drug names, doses, and management
+  options as facts/options, not commands.
+- Always end any management-style answer by noting the clinician makes the
+  final decision (e.g. "the treating clinician decides next steps").
 """
 
 
@@ -199,6 +215,55 @@ inline when source.document is present, state plainly otherwise.
 _BRIEFING_TRIGGERS = ("briefing", "pre-room", "pre room")
 
 
+# Three-section answer format for clinical management questions
+# ("should we start", "what dose", "next step", "treat", "manage", etc.).
+# Keeps chart facts, literature evidence, and clinician-facing
+# considerations visually separate so the answer reads as decision
+# support — not as an order on the patient.
+_MANAGEMENT_FORMAT = """
+THREE-SECTION FORMAT (apply when the question asks about clinical
+management — phrasing like "should we…", "what dose", "next step",
+"treat", "manage", "switch", "increase", "add a", "recommend", or any
+question implying an action to take on the patient):
+
+Use these three section headers, in this order, each on its own line:
+
+**CHART FINDINGS:** [What this patient's chart shows that's relevant
+to the question. Cite chart sources with [N] markers. Mark any gap
+with "not in chart" / "no record".]
+**EVIDENCE:** [What the literature says about patients in this
+clinical situation. Cite guidelines with [N] markers. State the
+evidence as findings or recommendations from the source — not as
+orders to act now.]
+**CONSIDERATIONS FOR THE CLINICIAN:** [Frame as questions the
+clinician may want to evaluate, options to weigh, or trade-offs.
+NEVER use imperative verbs aimed at the patient (no "start", "stop",
+"prescribe", "order", "give", "add", "switch", "increase",
+"decrease", "begin", "discontinue", "initiate", "taper"). Phrase
+options as "is consistent with", "may be reasonable to consider",
+"the clinician can weigh", etc. End by noting the clinician makes
+the final decision.]
+
+If the question is about a specific drug or dose, you may state the
+drug/dose factually inside CHART FINDINGS or EVIDENCE — but the
+CONSIDERATIONS section MUST NOT command action. The whole answer
+together must read as decision support, not as a prescription.
+"""
+
+_MANAGEMENT_TRIGGERS = (
+    "should we", "should i", "should the patient",
+    "what dose", "what's the dose", "what is the dose",
+    "next step", "next steps",
+    "treat", "treatment plan", "manage ", "management",
+    "switch ", "switch to",
+    "increase", "decrease", "taper",
+    "add a ", "add an ", "start a ", "start an ", "start the ",
+    "begin ", "initiate",
+    "prescribe", "order ",
+    "recommend", "recommendation",
+)
+
+
 # Appended to the answer system prompt when a citation catalog is available.
 # The catalog is given as numbered entries; the model must cite by number.
 _CITATION_MARKER_RULE = """
@@ -227,6 +292,17 @@ Rules:
 def _is_briefing(query: str) -> bool:
     q = (query or "").lower()
     return any(t in q for t in _BRIEFING_TRIGGERS)
+
+
+def _is_management_question(query: str) -> bool:
+    """True when the user is asking for clinical management direction —
+    triggers the three-section CHART/EVIDENCE/CONSIDERATIONS format and
+    the imperative-verb ban so we never output a prescription-style line.
+    """
+    q = (query or "").lower()
+    if _is_briefing(q):
+        return False  # briefings have their own format
+    return any(t in q for t in _MANAGEMENT_TRIGGERS)
 
 
 def _state_summary(state: GraphState) -> str:
@@ -371,10 +447,15 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
         )
 
     # Apply the W1 briefing template when the question is a pre-room briefing
-    # so the format stays stable across all patients.
-    system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + (
-        _BRIEFING_FORMAT if _is_briefing(query) else ""
-    )
+    # so the format stays stable across all patients. Apply the management
+    # three-section format when the question asks about clinical management
+    # so the answer reads as decision support, not an order.
+    extra_format = ""
+    if _is_briefing(query):
+        extra_format = _BRIEFING_FORMAT
+    elif _is_management_question(query):
+        extra_format = _MANAGEMENT_FORMAT
+    system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + extra_format
 
     resp = _client.messages.create(
         model=MODEL,

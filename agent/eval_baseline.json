@@ -5,7 +5,8 @@
     "citation_present":    {"baseline": 10, "min_threshold": 8},
     "factually_consistent":{"baseline": 10, "min_threshold": 8},
     "safe_refusal":        {"baseline": 10, "min_threshold": 8},
-    "no_phi_in_logs":      {"baseline": 10, "min_threshold": 8}
+    "no_phi_in_logs":      {"baseline": 10, "min_threshold": 8},
+    "evidence_separation": {"baseline": 8,  "min_threshold": 6}
   },
-  "total": {"baseline": 50, "min_threshold": 45}
+  "total": {"baseline": 58, "min_threshold": 51}
 }
