@@ -82,8 +82,14 @@ function pickEmail(p: Patient): string {
 function pickMrn(p: Patient): string {
   const ids = p.identifier ?? [];
   const usual = ids.find((i) => i.use === "usual");
-  if (usual?.value) return usual.value;
-  return ids[0]?.value ?? "";
+  const raw = usual?.value ?? ids[0]?.value ?? "";
+  // The intake forms print the MRN with a literal "MRN-" prefix
+  // (e.g. "MRN-2026-04492") and that's what we store verbatim. The
+  // Demographics card and Patient Header both label this field "MRN",
+  // so showing "MRN: MRN-2026-04492" is visually redundant. Strip a
+  // leading "MRN" prefix (case-insensitive, with an optional dash,
+  // colon, or whitespace) for display.
+  return raw.replace(/^mrn[\s\-:]*/i, "");
 }
 
 export async function fetchDemographics(
