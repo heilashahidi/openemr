@@ -35,8 +35,21 @@ export interface AllergyRow {
 function allergenTitle(r: AllergyIntolerance): string {
   const cc = r.code;
   if (cc?.text) return cc.text;
-  if (cc?.coding?.[0]?.display) return cc.coding[0].display;
-  return "Unknown allergen";
+  // OpenEMR's FHIR projection only populates AllergyIntolerance.code when
+  // `lists.diagnosis` carries a SNOMED/RxNorm code. Our ingest writes the
+  // allergen as free text in `lists.title` and leaves `diagnosis` empty,
+  // so code.coding[0] comes back as ("unknown", "Unknown") via the
+  // data-absent-reason CodeSystem. The actual allergen lives in
+  // text.div as XHTML; strip the wrapping <div> and use that.
+  const display = cc?.coding?.[0]?.display;
+  const isAbsent = display === "Unknown" || cc?.coding?.[0]?.code === "unknown";
+  if (display && !isAbsent) return display;
+  const div = r.text?.div;
+  if (div) {
+    const stripped = div.replace(/<[^>]+>/g, "").trim();
+    if (stripped) return stripped;
+  }
+  return display ?? "Unknown allergen";
 }
 
 function severityCode(r: AllergyIntolerance): string {
