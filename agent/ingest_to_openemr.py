@@ -371,21 +371,54 @@ def populate_insurance(pid, ins_text, document_id=None):
         print(f"  ⏭️  Insurance skipped (looks like MRN): {ins_text}")
         return
 
-    provider, policy = ins_text, ''
+    provider_text, policy = ins_text, ''
     m = re.search(r'(?:member\s*id|policy\s*(?:number|#)?|id\s*#?)\s*:?\s*([\w\-]+)', ins_text, re.IGNORECASE)
     if m:
         policy = m.group(1)
-        provider = ins_text[:m.start()].strip(' -—:,')
+        provider_text = ins_text[:m.start()].strip(' -—:,')
+
+    # OpenEMR's PHP-side InsuranceCompany class expects insurance_data.provider
+    # to be an INTEGER FK into insurance_companies (it later passes that
+    # value to PhoneNumberService::getPhonesByForeignId(int $foreignId)). If
+    # we wrote the company name as a string, demographics.php throws a
+    # TypeError. Resolve (or upsert) the company row first and store its
+    # integer id.
+    company_id = _upsert_insurance_company(provider_text)
+
     run_sql(
         f"DELETE FROM insurance_data WHERE pid={pid} AND type='primary';"
     )
     ins_id = run_sql_insert(
-        f"INSERT INTO insurance_data (pid, type, provider, policy_number, date) "
-        f"VALUES ({pid}, 'primary', '{escape_sql(provider)}', '{escape_sql(policy)}', CURDATE());"
+        f"INSERT INTO insurance_data (pid, type, provider, plan_name, policy_number, date) "
+        f"VALUES ({pid}, 'primary', '{company_id}', '{escape_sql(provider_text)}', "
+        f"'{escape_sql(policy)}', CURDATE());"
     )
     add_citation('insurance_data', ins_id, document_id,
                  citation={'field_or_chunk_id': 'insurance', 'quote_or_value': ins_text})
-    print(f"  ✅ Insurance: {provider} / policy={policy}")
+    print(f"  ✅ Insurance: {provider_text} (company_id={company_id}) / policy={policy}")
+
+
+def _upsert_insurance_company(name: str) -> int:
+    """Return the integer id of an insurance_companies row with the given
+    name, inserting one (with a fresh uuid) if no match exists. The row is
+    minimal — only id/uuid/name/inactive — but that's enough to satisfy the
+    PHP-side InsuranceCompany class and OpenEMR's FHIR Coverage projection.
+    """
+    name = (name or '').strip() or 'Unknown carrier'
+    out = run_sql(
+        f"SELECT id FROM insurance_companies WHERE name='{escape_sql(name)}' LIMIT 1;"
+    ) or ""
+    lines = [l for l in out.strip().split("\n") if l]
+    if len(lines) >= 2 and lines[1].strip().isdigit():
+        return int(lines[1].strip())
+    next_id_out = run_sql("SELECT COALESCE(MAX(id),0)+1 FROM insurance_companies;") or ""
+    nlines = [l for l in next_id_out.strip().split("\n") if l]
+    next_id = int(nlines[1].strip()) if len(nlines) >= 2 else 1
+    run_sql_insert(
+        "INSERT INTO insurance_companies (id, uuid, name, inactive) VALUES "
+        f"({next_id}, UNHEX(REPLACE(UUID(),'-','')), '{escape_sql(name)}', 0);"
+    )
+    return next_id
 
 
 def populate_problem_list(pid, conditions, form_date, document_id=None):
