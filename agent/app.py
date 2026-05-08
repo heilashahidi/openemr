@@ -492,18 +492,24 @@ def labs(patient_uuid: str):
 
 
 # OpenEMR's FHIR Coverage requires insurance_data.provider to be an integer
-# FK into insurance_companies — but the table is empty in this install, so
-# Coverage searches return total=0 even for Chen's seeded insurance row.
-# Read insurance_data directly.
+# FK into insurance_companies, but the projection still returns total=0 for
+# our minimal company rows. Read insurance_data directly and LEFT JOIN to
+# insurance_companies to recover the carrier display name (insurance_data
+# stores only the integer FK, not the name).
 @app.get("/coverage/{patient_uuid}")
 def coverage(patient_uuid: str):
     pid = _pid_from_fhir_uuid(patient_uuid)
     if pid is None:
         return []
     out = _run_sql(
-        "SELECT id, type, provider, plan_name, policy_number, group_number, "
-        "copay, accept_assignment, date, date_end "
-        f"FROM insurance_data WHERE pid={pid} ORDER BY FIELD(type,'primary','secondary','tertiary');"
+        "SELECT i.id, i.type, ic.name AS company_name, i.plan_name, "
+        "i.policy_number, i.group_number, i.copay, i.accept_assignment, "
+        "i.date, i.date_end "
+        "FROM insurance_data i "
+        "LEFT JOIN insurance_companies ic "
+        "  ON ic.id = CAST(NULLIF(i.provider,'') AS UNSIGNED) "
+        f"WHERE i.pid={pid} "
+        "ORDER BY FIELD(i.type,'primary','secondary','tertiary');"
     ) or ""
     lines = [l for l in out.strip().split("\n") if l]
     if len(lines) < 2:
@@ -514,14 +520,17 @@ def coverage(patient_uuid: str):
         parts = line.split("\t")
         if len(parts) < 10:
             continue
-        cid, ctype, provider, plan, policy, group, copay, accept, date, date_end = parts[:10]
+        cid, ctype, company_name, plan, policy, group, copay, accept, date, date_end = parts[:10]
         def clean(s: str) -> str:
             s = (s or "").strip()
             return "" if s == "NULL" else s
+        # Prefer the insurance_companies.name; fall back to plan_name (where
+        # the ingest now mirrors the carrier text for display).
+        insurer = clean(company_name) or clean(plan)
         rows.append({
             "id": f"cov_{cid}",
             "type": clean(ctype) or "primary",
-            "insurer_name": clean(provider),
+            "insurer_name": insurer,
             "plan_name": clean(plan),
             "policy_number": clean(policy),
             "group_number": clean(group),
