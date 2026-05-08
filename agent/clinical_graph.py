@@ -58,6 +58,14 @@ from clinical_logger import log_encounter, estimate_cost_usd
 
 MODEL = "claude-sonnet-4-5"
 
+# Routing decisions are tiny JSON blobs (one of three workers + a one-line
+# reason); they don't need Sonnet's reasoning depth. Using Haiku for the
+# 3-4 supervisor calls per turn drops their cost from ~3s each to ~0.5-1s
+# each — typically 5-8s shaved per query, with no behavior change since
+# the synthesis call (which writes the actual clinical answer) still runs
+# on Sonnet.
+ROUTING_MODEL = "claude-haiku-4-5-20251001"
+
 # Latency caps. The previous full eval saw F-07 hang for 8070 seconds on a
 # single case — the SDK's default 600s timeout × default 2 retries can stack
 # up into ~30 min per call, and stuck retries inside the supervisor can
@@ -521,7 +529,7 @@ def supervisor(state: GraphState) -> GraphState:
         usage: dict = {}
     else:
         resp = _client.messages.create(
-            model=MODEL,
+            model=ROUTING_MODEL,
             max_tokens=512,
             system=_SUPERVISOR_SYSTEM,
             messages=[{"role": "user", "content": _state_summary(state)}],
