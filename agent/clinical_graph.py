@@ -247,17 +247,18 @@ management — phrasing like "should we…", "what dose", "next step",
 "treat", "manage", "switch", "increase", "add a", "recommend", or any
 question implying an action to take on the patient):
 
-Use these three section headers, in this order, each on its own line:
+Use these three section headers, in this order, each on its own line.
+Stay terse — the entire answer should fit on one screen.
 
-**CHART FINDINGS:** [What this patient's chart shows that's relevant
+**CHART FINDINGS:** [≤60 words. Only the chart facts directly relevant
 to the question. Cite chart sources with [N] markers. Mark any gap
-with "not in chart" / "no record".]
-**EVIDENCE:** [What the literature says about patients in this
-clinical situation. Cite guidelines with [N] markers. State the
-evidence as findings or recommendations from the source — not as
-orders to act now.]
-**CONSIDERATIONS FOR THE CLINICIAN:** [Frame as questions the
-clinician may want to evaluate, options to weigh, or trade-offs.
+with "not in chart" / "no record". Do NOT recap demographics, family
+history, or unrelated conditions.]
+**EVIDENCE:** [≤60 words. The 1-2 most relevant points from the
+literature. Cite guidelines with [N] markers. State the evidence as
+findings — not as orders.]
+**CONSIDERATIONS FOR THE CLINICIAN:** [≤120 words, at most 3
+numbered options. Frame as questions or trade-offs.
 NEVER use imperative verbs aimed at the patient (no "start", "stop",
 "prescribe", "order", "give", "add", "switch", "increase",
 "decrease", "begin", "discontinue", "initiate", "taper"). Phrase
@@ -267,8 +268,8 @@ the final decision.]
 
 If the question is about a specific drug or dose, you may state the
 drug/dose factually inside CHART FINDINGS or EVIDENCE — but the
-CONSIDERATIONS section MUST NOT command action. The whole answer
-together must read as decision support, not as a prescription.
+CONSIDERATIONS section MUST NOT command action. Total budget for the
+answer is ~240 words. Be ruthless about cutting tangential content.
 """
 
 _MANAGEMENT_TRIGGERS = (
@@ -495,9 +496,14 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
     system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + extra_format
 
     try:
+        # 1024 tokens ≈ 700 words — comfortably above the 240-word target
+        # in _MANAGEMENT_FORMAT and the ~150-word briefing format, while
+        # forcing the model to stay terse on long-form questions. Pre-fix
+        # answers ran 4400+ chars (~700 words) which felt like a chart
+        # dump in the chat bubble.
         resp = _client.messages.create(
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=1024,
             system=system,
             messages=[{"role": "user", "content": "\n\n".join(parts)}],
         )
