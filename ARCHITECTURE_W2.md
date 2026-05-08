@@ -14,11 +14,12 @@ Week 2 added three structural pieces on top of the Week 1 sidecar:
 
 A **58-case boolean-rubric eval suite** gates regression in CI, including a case that walks the import graph to confirm the data-store boundary holds.
 
-After the initial W2 build, four reviewer-driven improvements were added:
+After the initial W2 build, five reviewer-driven improvements were added:
 **(a)** a three-section evidence boundary on clinical-management answers (CHART FINDINGS / EVIDENCE / CONSIDERATIONS) with an imperative-verb ban — gated by a new `evidence_separation` eval bucket;
 **(b)** a routing-trace panel in the chat UI that surfaces every supervisor → worker handoff with reason and per-step latency;
 **(c)** per-call SDK timeouts plus a 120s wall-clock budget enforced inside the supervisor — F-07 (BNP-not-in-chart) went from 8070s on the original baseline to 12s under the cap;
-**(d)** synonym-aware query expansion and a same-source diversity cap in retrieval.
+**(d)** synonym-aware query expansion and a same-source diversity cap in retrieval;
+**(e)** a two-model split — Haiku 4.5 routes, Sonnet 4.5 writes — which dropped per-supervisor-call latency from ~3s to ~1s and shaved ~80s off the full eval (770s → 690s).
 
 A separate **React dashboard** (`dashboard/`) was wired into OpenEMR's `demographics.php` via a same-origin iframe, with four agent-side endpoints (`/labs`, `/coverage`, `/care-team`, `/family-history`) that read from MariaDB directly because OpenEMR's FHIR projection doesn't surface that data.
 
@@ -98,7 +99,27 @@ Two layers of cap, added after a single eval case (F-07 "BNP not in chart") burn
 - **End-to-end budget.** `graph_run()` seeds the initial state with `deadline_ts = now + TOTAL_BUDGET_S` (currently 120s). The supervisor checks `time.time() > deadline_ts` before each routing call; once exceeded, it forces `next: "finish"` and runs `_synthesize_answer` on whatever data was collected, so the user gets a real reply rather than a hang. The synthesis call itself catches `APITimeoutError` / `APIConnectionError` and returns a graceful "couldn't complete in budget" message rather than crashing the request.
 - **Trace.** A `timed_out: bool` is recorded in the encounter log so dashboards can flag budget hits.
 
-After the caps, F-07 ran in 12s, and the full 58-case eval consistently finishes in 770–805s end-to-end.
+After the caps, F-07 ran in 12s, and the full 58-case eval consistently finishes in 690–770s end-to-end.
+
+### 1.5 Two-model split: Haiku routes, Sonnet writes
+
+Supervisor routing decisions are tiny JSON blobs (one of three workers + a one-line reason). They don't need Sonnet's reasoning depth, but they were the per-step bottleneck — three of those calls per management question, ~3s each. Running them on **Haiku 4.5** (`claude-haiku-4-5-20251001`) drops each routing call to ~1s with no behavior change in spot-checks, and the eval verifies parity across all 58 cases.
+
+```python
+MODEL = "claude-sonnet-4-5"          # synthesis (writes the answer)
+ROUTING_MODEL = "claude-haiku-4-5-20251001"  # supervisor (decides next worker)
+```
+
+One subtlety: Haiku occasionally appends a short explanatory tail after the JSON object, so `_parse_json` was rewritten to use `json.JSONDecoder().raw_decode()` — reads the first valid JSON value and ignores trailing content. It also strips a leading `"Here is the JSON:"`-style preamble. Both are defensive; Sonnet's clean JSON still parses through the same path.
+
+Measured impact:
+
+| Query type | Before (all-Sonnet) | After (Haiku route + Sonnet write) |
+|---|---|---|
+| Per supervisor call | ~3.0s | ~1.0s |
+| Management question end-to-end | ~33s | ~29s |
+| Simple lookup ("list allergies") | ~12s | ~6s |
+| Full 58-case eval | ~770s | ~690s |
 
 ---
 
@@ -277,7 +298,7 @@ Patient data may exist in OpenEMR's relational tables (which OpenEMR exposes as 
 | `no_phi_in_logs` | 10 | Encounter logs scrub PHI (names, DOB, phone, ZIP); required structured fields (tool_sequence, latency_per_step_ms, tokens_used, cost_estimate_usd, retrieval_hits, eval_outcome) are present | LLM + log assertion |
 | `evidence_separation` *(added in final-submission tightening)* | 8 | In-scope clinical-management questions (E-01..E-08: statin / metformin dose / next step / anticoagulant / treatment plan / insulin switch / beta-blocker / BP) yield three-section answers without sentence-leading imperative commands. Catches the soft over-recommendation pattern that `safe_refusal` misses. | LLM |
 
-The runner exits 1 if any category drops below baseline, so CI fails on meaningful regression. Latest run: **58/58 in 12–13 min** under the latency caps.
+The runner exits 1 if any category drops below baseline, so CI fails on meaningful regression. Latest run: **58/58 in 690s (~11.5 min)** with Haiku routing.
 
 ### 5.1 Boolean rubrics, not 1–10 scales
 
@@ -323,7 +344,8 @@ Concurrency: `cancel-in-progress` keyed by ref, so a second push to a PR cancels
 agent/
 ├── clinical_graph.py             ← supervisor + 3 workers + answer synthesis
 │                                   (incl. _MANAGEMENT_FORMAT, evidence boundary,
-│                                   PER_CALL_TIMEOUT_S, TOTAL_BUDGET_S)
+│                                   PER_CALL_TIMEOUT_S, TOTAL_BUDGET_S,
+│                                   ROUTING_MODEL=Haiku 4.5 / MODEL=Sonnet 4.5)
 ├── evidence_retriever.py         ← hybrid RAG + reranker + synonym expansion +
 │                                   same-source diversity cap
 ├── document_extractor.py         ← Claude VLM-based PDF/PNG → structured JSON
@@ -374,7 +396,7 @@ dashboard/                          ← Vite + React + TypeScript SPA
 
 **"Why one supervisor + workers loop, instead of agent-as-tools?"** The requirement was explicit handoffs. With workers-as-tools, routing is hidden inside the LLM's tool-call decision. With supervisor-as-graph-node, routing is a visible Python function and every transition is logged with `from`, `to`, `reason`. Auditing a clinical decision-support trace requires that.
 
-**"Why split routing from synthesis?"** The supervisor's job is "what next?" — that fits a small JSON-output prompt with truncated state. The synthesizer's job is "write the answer" — that needs the full chart and full evidence to avoid inventing values. One-call-does-both produced a hallucination class we measured and fixed.
+**"Why split routing from synthesis?"** The supervisor's job is "what next?" — that fits a small JSON-output prompt with truncated state. The synthesizer's job is "write the answer" — that needs the full chart and full evidence to avoid inventing values. One-call-does-both produced a hallucination class we measured and fixed. Splitting the prompts also let us split the *models*: routing now runs on Haiku 4.5 (cheaper, ~3× faster, and adequate for picking one of three workers), while synthesis stays on Sonnet 4.5 where reasoning depth matters.
 
 **"Why hybrid retrieval rather than pure dense?"** Dense alone misses exact-name queries (drug names, lab tests). BM25 alone misses synonyms (DOAC ≈ apixaban). The 0.4/0.6 mix wins on both, verified across 10 retrieval test cases.
 
