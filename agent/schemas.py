@@ -8,8 +8,8 @@ deviation from the schema fails fast at validate-time, which the eval
 suite (schema_valid bucket) exercises directly.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Optional, Union
 from datetime import date
 
 
@@ -117,7 +117,18 @@ class IntakeFormExtraction(BaseModel):
     past_medical_history: list[str] = Field(default_factory=list, description="Past medical history / problem list (each entry is one condition, e.g. 'Hypertension', 'Type 2 diabetes')")
     surgical_history: list[str] = Field(default_factory=list, description="Past surgical history (each entry is one surgery, e.g. 'Appendectomy 2010', 'Cholecystectomy 2018')")
     treating_physicians: Optional[str] = Field(default=None, description="Treating physicians / care team — names and roles (e.g. 'Dr. Smith (PCP), Dr. Jones (Cardiologist)')")
-    review_of_systems: Optional[dict] = Field(default=None, description="Review of systems by body system")
+    # The VLM occasionally returns a literal string ("Not documented",
+    # "None") for forms without a ROS section instead of an empty dict.
+    # Accept either and normalize so schema validation doesn't reject
+    # the whole extraction over a missing optional field.
+    review_of_systems: Union[dict, str, None] = Field(default=None, description="Review of systems by body system; an empty/None dict if absent")
+
+    @field_validator("review_of_systems", mode="before")
+    @classmethod
+    def _coerce_ros(cls, v):
+        if isinstance(v, str):
+            return None  # treat any free-text marker as absent
+        return v
     
     # Metadata
     form_date: Optional[str] = Field(default=None, description="Date the form was completed")

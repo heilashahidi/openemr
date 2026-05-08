@@ -346,11 +346,27 @@ def _state_summary(state: GraphState) -> str:
 
 
 def _parse_json(raw: str) -> dict:
-    raw = raw.strip()
+    """Parse the first JSON object from the model's response.
+
+    Sonnet typically returns a clean JSON blob. Haiku 4.5 sometimes
+    appends a short explanatory tail after the JSON ("Extra data" error
+    in json.loads), so we use JSONDecoder.raw_decode which reads the
+    first valid JSON value and ignores trailing content.
+    """
+    raw = (raw or "").strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw
-    return json.loads(raw)
+        raw = raw.strip()
+    # Find the first '{' so a leading "Here is the JSON:" preamble
+    # doesn't break parsing either.
+    start = raw.find("{")
+    if start > 0:
+        raw = raw[start:]
+    obj, _ = json.JSONDecoder().raw_decode(raw)
+    if not isinstance(obj, dict):
+        raise ValueError(f"expected JSON object, got {type(obj).__name__}")
+    return obj
 
 
 def _usage_dict(resp) -> dict:
