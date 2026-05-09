@@ -74,7 +74,8 @@ python3 eval_clinical_graph.py
 
 ## Stable public deployment
 
-The deployed URL above is hosted on the project laptop via ngrok with
-both tunnels and the agent running as system services so they survive
-reboots and crashes. See **`deploy/README.md`** for the launchd /
-ngrok config — only relevant if you're redeploying on your own machine.
+The deployed URL above is hosted on the project laptop via ngrok. To
+make both tunnels and the agent auto-restart on crash and survive
+laptop reboots, see **`deploy/README.md`** for the launchd + ngrok
+service config — relevant if you're redeploying on your own machine
+or want to harden this one.
