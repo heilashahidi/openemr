@@ -2061,7 +2061,7 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
             );
             $reactFhirUuid = $patientUuidRow['fhir_uuid'] ?? '';
             if ($reactFhirUuid) :
-                $reactDashboardUrl = 'https://agent-copilot.ngrok-free.dev/dashboard/?patient='
+                $reactDashboardUrl = 'https://agent.146-190-75-148.sslip.io/dashboard/?patient='
                     . urlencode($reactFhirUuid) . '&v=' . time();
                 ?>
                 <div class="row mt-4">
@@ -2177,7 +2177,7 @@ $oemr_ui = new OemrUI($arrOeUiSettings);
     <span>⚕️ Clinical Co-Pilot</span>
     <button id="copilot-drawer-close" onclick="document.getElementById('copilot-drawer').classList.remove('open'); document.getElementById('copilot-btn').classList.remove('hidden');">✕</button>
   </div>
-  <iframe src="<?php echo 'https://agent-copilot.ngrok-free.dev/ui?v=' . time(); ?>"></iframe>
+  <iframe src="<?php echo 'https://agent.146-190-75-148.sslip.io/ui?v=' . time(); ?>"></iframe>
 </div>
 <script>
 (function(){
