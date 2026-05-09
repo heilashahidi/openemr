@@ -795,11 +795,46 @@ def ingest_lab_results(extraction, patient_pid, source_path):
     print(f"  ✅ {len(labs)} lab results stored in procedure tables (order={order_id}, report={report_id})")
 
 
+def ensure_schema():
+    """Idempotent schema fixes for fresh OpenEMR installs.
+
+    OpenEMR's stock images ship with two known issues that block this
+    pipeline if not addressed: `documents.id` lacks AUTO_INCREMENT (so
+    every insert past the first lands at id=0 and silently collides on
+    the primary key), and the `derived_fact_citations` sidecar table
+    used by the citation pipeline doesn't exist at all. Both are safe
+    to apply repeatedly — running this function at the top of `main()`
+    means a fresh deploy or CI run never has to run SQL by hand.
+    """
+    # 1. AUTO_INCREMENT on documents.id. MODIFY is a no-op when the
+    #    column is already auto-increment, so re-runs are harmless.
+    run_sql("ALTER TABLE documents MODIFY id INT(11) NOT NULL AUTO_INCREMENT;")
+
+    # 2. derived_fact_citations sidecar.
+    run_sql(
+        "CREATE TABLE IF NOT EXISTS derived_fact_citations ("
+        "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+        "  target_table VARCHAR(64) NOT NULL,"
+        "  target_id BIGINT NOT NULL,"
+        "  document_id BIGINT NOT NULL,"
+        "  page_or_section VARCHAR(255),"
+        "  field_or_chunk_id VARCHAR(255),"
+        "  quote_or_value TEXT,"
+        "  bbox_json TEXT,"
+        "  KEY idx_target (target_table, target_id),"
+        "  KEY idx_document (document_id)"
+        ");"
+    )
+
+
 def main():
     print("=" * 60)
     print("  OpenEMR Document Ingestion Pipeline")
     print("  Extract → Validate → Store")
     print("=" * 60)
+
+    # Apply schema migrations before any inserts. Self-heals on every run.
+    ensure_schema()
 
     sample_dir = "sample_docs"
     intake_dir = os.path.join(sample_dir, "intake-forms")
