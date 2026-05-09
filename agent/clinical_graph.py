@@ -76,7 +76,44 @@ PER_CALL_TIMEOUT_S = 60
 PER_CALL_MAX_RETRIES = 1
 TOTAL_BUDGET_S = 120
 
-_client = Anthropic(timeout=PER_CALL_TIMEOUT_S, max_retries=PER_CALL_MAX_RETRIES)
+# Optional LangSmith tracing. If LANGSMITH_API_KEY is set in the environment,
+# every Anthropic API call (supervisor routing + synthesis) gets streamed to
+# the configured LangSmith project. Useful for grader review without having
+# to dig into local JSONL logs. Falls back to a plain Anthropic client when
+# the key is absent — non-LangSmith deployments are unaffected.
+def _build_anthropic_client():
+    base = Anthropic(timeout=PER_CALL_TIMEOUT_S, max_retries=PER_CALL_MAX_RETRIES)
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return base
+    try:
+        from langsmith.wrappers import wrap_anthropic
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        os.environ.setdefault("LANGSMITH_PROJECT", "clinical-copilot")
+        wrapped = wrap_anthropic(base)
+        print(f"  ✅ LangSmith tracing enabled (project={os.environ['LANGSMITH_PROJECT']})")
+        return wrapped
+    except Exception as exc:  # pragma: no cover
+        print(f"  ⚠️ LangSmith wrap failed, falling back to plain Anthropic: {exc}")
+        return base
+
+_client = _build_anthropic_client()
+
+
+# Tracing decorator — `@traceable` from langsmith if available, else a no-op.
+# Decorating each graph node + the synthesis call gives LangSmith a tree view
+# of one full chat turn instead of a flat list of Anthropic API calls.
+def _maybe_traceable(name: str):
+    if not os.getenv("LANGSMITH_API_KEY"):
+        def _noop(fn):
+            return fn
+        return _noop
+    try:
+        from langsmith import traceable
+        return traceable(name=name, run_type="chain")
+    except Exception:
+        def _noop(fn):
+            return fn
+        return _noop
 
 
 # ── State ──────────────────────────────────────────────────────────────────
@@ -446,6 +483,7 @@ def _build_claims_catalog(state: GraphState) -> list[dict]:
     return catalog
 
 
+@_maybe_traceable("synthesize_answer")
 def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
     """Second LLM call — returns (answer_markdown, claims, token_usage).
 
@@ -526,6 +564,7 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
     return answer, claims_used, _usage_dict(resp)
 
 
+@_maybe_traceable("supervisor")
 def supervisor(state: GraphState) -> GraphState:
     """Inspect state, ask the model what to do next, log the handoff.
 
@@ -595,6 +634,7 @@ def _route_from_supervisor(state: GraphState) -> str:
 
 # ── Workers ────────────────────────────────────────────────────────────────
 
+@_maybe_traceable("intake_extractor")
 def intake_extractor(state: GraphState) -> GraphState:
     """Extract structured fields from the attached document."""
     t0 = time.time()
@@ -629,6 +669,7 @@ def intake_extractor(state: GraphState) -> GraphState:
     }
 
 
+@_maybe_traceable("evidence_retriever")
 def evidence_retriever(state: GraphState) -> GraphState:
     """Search the guideline corpus for snippets relevant to the query."""
     t0 = time.time()
@@ -675,6 +716,7 @@ def _rows(query: str) -> list[list[str]]:
     return result
 
 
+@_maybe_traceable("chart_lookup")
 def chart_lookup(state: GraphState) -> GraphState:
     """Pull the patient's stored chart with citations for every fact."""
     t0 = time.time()
@@ -888,6 +930,7 @@ GRAPH = build_graph()
 index_guidelines()
 
 
+@_maybe_traceable("clinical_graph_turn")
 def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0,
         eval_outcome: Optional[str] = None) -> dict:
     """Convenience runner. Returns the terminal state.

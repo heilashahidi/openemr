@@ -20,11 +20,25 @@ from schemas import (
 # (a multi-page PDF + 4096-token output), so we give it a wider per-call
 # timeout than the chat client. One retry is plenty — without this cap the
 # SDK default 600s × 2 retries = ~30 min worst case if the upstream wedges.
-client = Anthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-    timeout=120,
-    max_retries=1,
-)
+#
+# When LANGSMITH_API_KEY is set, the client is wrapped so every vision
+# call (one per ingested document) shows up in the LangSmith dashboard
+# alongside the chat traces.
+def _build_extraction_client():
+    base = Anthropic(
+        api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        timeout=120,
+        max_retries=1,
+    )
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return base
+    try:
+        from langsmith.wrappers import wrap_anthropic
+        return wrap_anthropic(base)
+    except Exception:
+        return base
+
+client = _build_extraction_client()
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 
