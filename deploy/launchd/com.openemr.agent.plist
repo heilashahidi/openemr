@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent definition for the OpenEMR FastAPI agent.
+
+  Install (run from the repo root):
+    cp deploy/launchd/com.openemr.agent.plist ~/Library/LaunchAgents/
+    # Edit the copy and replace REPO_ROOT_HERE with the absolute path to
+    # this repository checkout (e.g. /Users/heilashahidi/Gauntlet/openemr).
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.openemr.agent.plist
+    launchctl enable gui/$UID/com.openemr.agent
+
+  Verify:
+    launchctl print gui/$UID/com.openemr.agent | head
+    curl -s http://localhost:8000/health      # should return 200
+
+  Stop / restart / unload:
+    launchctl kickstart -k gui/$UID/com.openemr.agent      # restart
+    launchctl bootout gui/$UID/com.openemr.agent           # unload
+    rm ~/Library/LaunchAgents/com.openemr.agent.plist
+
+  Logs:
+    /tmp/openemr-agent.out.log
+    /tmp/openemr-agent.err.log
+
+  Behavior:
+    - Loads at user login (RunAtLoad).
+    - Restarts the agent on crash (KeepAlive). Does NOT restart in a tight
+      loop on persistent failure — launchd applies an exponential backoff.
+    - Inherits the user's PATH at login time (StandardOutPath collects any
+      "command not found" errors so you can see if python3 isn't found).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openemr.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>REPO_ROOT_HERE/deploy/run-agent.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>REPO_ROOT_HERE</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/openemr-agent.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/openemr-agent.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

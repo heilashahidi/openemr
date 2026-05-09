@@ -1,0 +1,53 @@
+###############################################################################
+# ngrok agent config — both tunnels in one file.
+#
+# Install:
+#   1. Sign in at https://dashboard.ngrok.com/get-started/your-authtoken,
+#      copy the auth token, paste it below in place of REPLACE_ME.
+#   2. Copy this file into the OS-level config location:
+#        cp deploy/ngrok.yml ~/.config/ngrok/ngrok.yml
+#      (create the directory first if it doesn't exist:
+#        mkdir -p ~/.config/ngrok)
+#   3. Bring both tunnels up at once:
+#        ngrok start --all
+#      …or run as a launchd service so they auto-start on login:
+#        ngrok service install --config ~/.config/ngrok/ngrok.yml
+#        sudo ngrok service start
+#
+# What you get:
+#   - https://backlog-troubling-unfold.ngrok-free.dev → OpenEMR (port 9300)
+#   - https://agent-copilot.ngrok-free.dev          → FastAPI agent (port 8000)
+#
+# Both URLs are reserved on the ngrok account, so they don't change between
+# restarts. Graders get a stable link they can hit any time the laptop is up
+# and connected.
+###############################################################################
+
+version: "3"
+
+agent:
+  authtoken: REPLACE_ME
+
+tunnels:
+  # OpenEMR (PHP + MariaDB stack inside docker/development-easy).
+  # The local target is HTTPS because the docker compose stack terminates
+  # TLS on 9300; ngrok handles TLS to the public side itself.
+  openemr:
+    proto: http
+    addr: https://localhost:9300
+    domain: backlog-troubling-unfold.ngrok-free.dev
+    inspect: true
+
+  # FastAPI agent (LangGraph supervisor + workers + dashboard SPA).
+  # Plain HTTP locally; ngrok terminates TLS for the public URL.
+  agent:
+    proto: http
+    addr: 8000
+    domain: agent-copilot.ngrok-free.dev
+    inspect: true
+    # Uncomment to require Basic Auth (slows scraper traffic, gates graders
+    # behind a known credential pair). Share both username and password in
+    # your submission notes.
+    #
+    # basic_auth:
+    #   - "grader:CHANGE_THIS_PASSWORD"
