@@ -1,5 +1,6 @@
 # Per-encounter logs (regenerated on every run; PHI-redacted but not for repo).
 logs/
 
-# Generated eval report — refreshes every run.
-eval_clinical_results.json
+# eval_clinical_results.json IS tracked — it's the artifact graders look at
+# to see the latest passing run's per-case detail. CI overwrites it on every
+# successful run.

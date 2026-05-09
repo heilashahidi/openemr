@@ -1,6 +1,8 @@
 # README_W2.md — Clinical Co-Pilot, Week 2
 
-> Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 58-case boolean-rubric eval suite gates regression in CI.
+[![Agent evals](https://github.com/heilashahidi/openemr/actions/workflows/agent-evals.yml/badge.svg?branch=master)](https://github.com/heilashahidi/openemr/actions/workflows/agent-evals.yml)
+
+> Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 58-case boolean-rubric eval suite gates regression in CI — see [`EVAL_RESULTS.md`](EVAL_RESULTS.md) for the latest run.
 
 **Companion docs:** `ARCHITECTURE_W2.md` (the design narrative), `README_W1.md` (the Week 1 baseline this builds on).
 
