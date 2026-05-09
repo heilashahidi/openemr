@@ -25,8 +25,21 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-LOGS_DIR = Path(__file__).parent / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
+# Logs directory. We try to create it next to this module, but in CI the
+# previous (Docker-based) seed step can leave the parent owned by root —
+# `mkdir` then raises PermissionError on import. Fall back to /tmp so the
+# whole agent doesn't refuse to import. Local dev keeps the in-tree path.
+def _resolve_logs_dir() -> Path:
+    primary = Path(__file__).parent / "logs"
+    try:
+        primary.mkdir(parents=True, exist_ok=True)
+        return primary
+    except (PermissionError, OSError):
+        fallback = Path(os.getenv("OPENEMR_AGENT_LOGS_DIR", "/tmp/openemr-agent-logs"))
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+LOGS_DIR = _resolve_logs_dir()
 
 # Anthropic Claude Sonnet 4.5 pricing (USD per million tokens) — used for the
 # per-encounter cost_estimate field. Values current as of W2 build.
