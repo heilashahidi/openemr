@@ -90,17 +90,19 @@ jobs:
           python backfill_citations.py
           python backfill_bboxes.py
 
-      - name: Run 50-case eval
+      - name: Run 58-case eval
         working-directory: agent
+        # The previous "Seed" step ran inside the OpenEMR docker container
+        # and chowned agent/ to root, so write to /tmp from CI.
         run: |
-          python eval_clinical_graph.py
+          python eval_clinical_graph.py --out /tmp/eval_clinical_results.json
 
       - name: Upload eval report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: eval-clinical-results
-          path: agent/eval_clinical_results.json
+          path: /tmp/eval_clinical_results.json
 
       - name: Tear down compose stack
         if: always()

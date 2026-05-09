@@ -707,8 +707,19 @@ def main() -> None:
     only = args.only.split(",") if args.only else None
     report = run_all(only=only, deterministic_only=args.deterministic)
 
-    with open(args.out, "w") as fh:
-        json.dump(report, fh, indent=2, default=str)
+    # Try the requested path first; fall back to /tmp if the workdir is
+    # read-only (e.g., CI where a prior docker step left agent/ owned by
+    # root). Don't lose the results just because the file write failed —
+    # the gate decision below still uses the in-memory `report`.
+    out_path = args.out
+    try:
+        with open(out_path, "w") as fh:
+            json.dump(report, fh, indent=2, default=str)
+    except (PermissionError, OSError) as exc:
+        out_path = os.path.join("/tmp", os.path.basename(args.out))
+        print(f"WARN: could not write {args.out} ({exc}); falling back to {out_path}")
+        with open(out_path, "w") as fh:
+            json.dump(report, fh, indent=2, default=str)
 
     s = report["summary"]
     print(f"\n=== summary: {s['passed']}/{s['total']} passed ({s['pass_rate']}) "
@@ -716,7 +727,7 @@ def main() -> None:
     for cat in sorted(report["by_category"]):
         b = report["by_category"][cat]
         print(f"  {cat:21s}  {b['passed']}/{b['total']}")
-    print(f"\nresults written to {args.out}")
+    print(f"\nresults written to {out_path}")
 
     if args.no_compare:
         return
