@@ -533,6 +533,46 @@ if DASHBOARD_DIST.is_dir():
     )
 
 
+# In-memory TTL cache for GET /apis/* responses. The React dashboard fires
+# ~10 FHIR calls in parallel on every patient open (Patient, Medications,
+# Allergies, Conditions, Encounters, Observations, Immunizations,
+# DocumentReferences, etc.) — each one round-trips through OpenEMR's PHP
+# layer to MariaDB. Caching for 60s makes any patient that's already been
+# loaded re-render instantly, which is the dominant pattern during a
+# demo (clinician switches between 4 patients repeatedly).
+_FHIR_CACHE_TTL_S = 60.0
+_fhir_cache: dict[str, tuple[float, int, str, bytes]] = {}
+_FHIR_CACHE_MAX_ENTRIES = 256
+
+
+def _fhir_cache_set(key: str, status_code: int, media: str, content: bytes) -> None:
+    if len(_fhir_cache) >= _FHIR_CACHE_MAX_ENTRIES:
+        # Cheap eviction: drop the oldest entry. dict iteration order is
+        # insertion order on Python 3.7+, so the first key is the oldest.
+        oldest = next(iter(_fhir_cache))
+        _fhir_cache.pop(oldest, None)
+    _fhir_cache[key] = (time.time(), status_code, media, content)
+
+
+def _fhir_cache_get(key: str) -> Optional[tuple[int, str, bytes]]:
+    entry = _fhir_cache.get(key)
+    if entry is None:
+        return None
+    ts, status_code, media, content = entry
+    if time.time() - ts > _FHIR_CACHE_TTL_S:
+        _fhir_cache.pop(key, None)
+        return None
+    return status_code, media, content
+
+
+# Browser-cache header for cached FHIR GETs. `private` so any future shared
+# proxy doesn't keep PHI; max-age matches the server-side TTL so the two
+# caches expire together.
+_FHIR_BROWSER_CACHE_HEADERS = {
+    "Cache-Control": f"private, max-age={int(_FHIR_CACHE_TTL_S)}",
+}
+
+
 @app.api_route("/apis/{rest_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def openemr_api_proxy(rest_path: str, request: Request):
     """Proxy /apis/* to OpenEMR with the agent's OAuth bearer token attached.
@@ -540,10 +580,29 @@ async def openemr_api_proxy(rest_path: str, request: Request):
     Lets the React dashboard call e.g. /apis/default/fhir/Patient/<id> from
     the same origin (no CORS, no client-side token plumbing). Same auth
     surface as everything else the agent does — no new credentials.
+
+    GET responses are cached in-memory for 60s — see _FHIR_CACHE_TTL_S.
+    Mutating methods bust the entire cache so writes don't read stale data
+    on the next refresh.
     """
+    method = request.method
+    qs = request.url.query
+    cache_key = f"{rest_path}?{qs}" if qs else rest_path
+
+    # Cache hit — skip the OpenEMR round-trip entirely.
+    if method == "GET":
+        cached = _fhir_cache_get(cache_key)
+        if cached is not None:
+            status_code, media, content = cached
+            return Response(
+                content=content,
+                status_code=status_code,
+                media_type=media,
+                headers={**_FHIR_BROWSER_CACHE_HEADERS, "X-Agent-Cache": "hit"},
+            )
+
     token = get_openemr_token()
     target = f"{OPENEMR_BASE}/apis/{rest_path}"
-    qs = request.url.query
     if qs:
         target = f"{target}?{qs}"
 
@@ -552,17 +611,31 @@ async def openemr_api_proxy(rest_path: str, request: Request):
         "Authorization": f"Bearer {token}",
         "Accept": request.headers.get("accept", "application/fhir+json"),
     }
-    if request.method != "GET" and request.headers.get("content-type"):
+    if method != "GET" and request.headers.get("content-type"):
         headers["Content-Type"] = request.headers["content-type"]
 
     resp = requests.request(
-        request.method,
+        method,
         target,
         data=body if body else None,
         headers=headers,
         verify=False,
     )
     media = resp.headers.get("content-type", "application/json")
+
+    # Cache successful GETs; bust everything on writes (the next read will
+    # repopulate). 200/304 only — don't cache 401/500/etc.
+    if method == "GET" and 200 <= resp.status_code < 300:
+        _fhir_cache_set(cache_key, resp.status_code, media, resp.content)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=media,
+            headers={**_FHIR_BROWSER_CACHE_HEADERS, "X-Agent-Cache": "miss"},
+        )
+    elif method != "GET":
+        _fhir_cache.clear()
+
     return Response(content=resp.content, status_code=resp.status_code, media_type=media)
 
 
