@@ -163,6 +163,37 @@
 
   .directory-row:last-child { border-bottom: none; }
 
+  /* "No patient — general guideline questions" row pinned to the top of the
+     directory. Different border + dim italic so it reads as a mode toggle,
+     not a patient. */
+  .directory-row.general-mode {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .directory-row.general-mode .directory-name {
+    color: var(--text-dim);
+    font-style: italic;
+    font-weight: 500;
+  }
+  .directory-row.general-mode.active {
+    background: var(--accent-dim);
+  }
+
+  /* Clear-patient pill that appears next to the patient name in the
+     header when a patient is selected. Lets the clinician switch to
+     general mode without re-opening the directory. */
+  .clear-patient-btn {
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 8px; font-size: 11px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+    margin-left: 8px;
+    transition: all 0.15s;
+  }
+  .clear-patient-btn:hover {
+    border-color: var(--accent); color: var(--text);
+  }
+
   .directory-name {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 13px; font-weight: 600; color: var(--text);
@@ -682,9 +713,10 @@
     <div class="patient-select-wrap">
       <label>Patient:</label>
       <div class="patient-directory-toggle" onclick="toggleDirectory()">
-        <span id="selectedPatientName">Select a patient...</span>
+        <span id="selectedPatientName">Select a patient — or ask a general question</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </div>
+      <button id="clearPatientBtn" class="clear-patient-btn" style="display:none" onclick="event.stopPropagation(); clearPatient()" title="Switch to general mode (no patient context)">× clear</button>
       <div class="patient-directory" id="patientDirectory">
         <div class="directory-header">
           <span>Patient Directory</span>
@@ -730,17 +762,23 @@
   <div class="chat-side">
     <div class="chat-header">
       <div class="chat-header-title">Follow-up Questions</div>
-      <div class="quick-actions">
+      <div class="quick-actions" id="quickActionsPatient">
         <button class="quick-btn" onclick="sendQuick('What medications is this patient on?')">Meds</button>
         <button class="quick-btn" onclick="sendQuick('Any recent lab results?')">Labs</button>
         <button class="quick-btn" onclick="sendQuick('What are the active conditions?')">Conditions</button>
         <button class="quick-btn" onclick="sendQuick('Any known allergies?')">Allergies</button>
       </div>
+      <div class="quick-actions" id="quickActionsGeneral">
+        <button class="quick-btn" onclick="sendQuick('What HbA1c target does the ADA recommend for adults with T2DM?')">HbA1c targets</button>
+        <button class="quick-btn" onclick="sendQuick('What does the USPSTF recommend for colorectal cancer screening?')">CRC screening</button>
+        <button class="quick-btn" onclick="sendQuick('What are the JNC-8 / ACC-AHA blood pressure targets for adults?')">BP targets</button>
+        <button class="quick-btn" onclick="sendQuick('When is statin therapy indicated for primary prevention?')">Statin Rx</button>
+      </div>
     </div>
     <div class="chat-area" id="chatArea">
       <div class="chat-welcome" id="chatWelcome">
-        Select a patient to begin. The briefing loads automatically on the left.<br>
-        Ask follow-up questions here.
+        Ask a clinical question to start.<br>
+        Pick a patient above to ground answers in their chart, or skip the picker and ask a general guideline question.
       </div>
     </div>
     <div class="typing" id="typing">
@@ -853,7 +891,18 @@ function renderDirectory(filter = '') {
     return !search || p.last.toLowerCase().includes(search) || p.first.toLowerCase().includes(search) || p.mrn.includes(search) || p.dob.includes(search);
   });
 
-  list.innerHTML = filtered.map(p => `
+  // First row: "general mode" — no patient context. The supervisor already
+  // routes to evidence_retriever (and skips chart_lookup) when no pid is
+  // set, so this just clears the UI's selection state.
+  const generalRow = `
+    <div class="directory-row general-mode ${selectedPatientId === '' ? 'active' : ''}" onclick="clearPatient()">
+      <div class="directory-name">No patient — ask a general guideline question</div>
+      <div class="directory-details">
+        <span>Skip the chart, ask anything (ADA, USPSTF, ACC/AHA, etc.)</span>
+      </div>
+    </div>`;
+
+  const patientRows = filtered.map(p => `
     <div class="directory-row ${p.id === selectedPatientId ? 'active' : ''}" onclick="selectPatient('${p.id}')">
       <div class="directory-name">${p.last}, ${p.first}</div>
       <div class="directory-details">
@@ -865,6 +914,8 @@ function renderDirectory(filter = '') {
       </div>
     </div>
   `).join('');
+
+  list.innerHTML = generalRow + patientRows;
 }
 
 function toggleDirectory() {
@@ -887,7 +938,54 @@ function selectPatient(id) {
   document.getElementById('selectedPatientName').textContent = `${patient.last}, ${patient.first}  |  DOB: ${patient.dob} (${patient.age}y)  |  ${patient.sex}  |  MRN: ${patient.mrn}`;
   document.getElementById('patientDirectory').classList.remove('open');
   document.getElementById('directorySearch').value = '';
+  _updateModeUi();
   onPatientSelect();
+}
+
+// Drop the patient context and switch to general-question mode. The agent
+// already supports unanchored queries (supervisor skips chart_lookup when
+// no pid is set) — this just resets the UI: clears selection, restores the
+// briefing-side placeholder, swaps the quick-action buttons, hides the
+// "× clear" pill in the header.
+function clearPatient() {
+  selectedPatientId = '';
+  conversationHistory = [];
+
+  document.getElementById('selectedPatientName').textContent =
+    'General mode — no patient selected';
+  document.getElementById('patientDirectory').classList.remove('open');
+  document.getElementById('directorySearch').value = '';
+
+  // Reset chat area + welcome.
+  const chatArea = document.getElementById('chatArea');
+  chatArea.innerHTML = `
+    <div class="chat-welcome" id="chatWelcome">
+      General mode — ask any guideline-backed clinical question.<br>
+      Pick a patient above to ground answers in their chart.
+    </div>`;
+
+  // Reset briefing-side placeholder.
+  const placeholder = document.getElementById('briefingPlaceholder');
+  const loading = document.getElementById('briefingLoading');
+  const cards = document.getElementById('briefingCards');
+  if (placeholder) placeholder.style.display = '';
+  if (loading) loading.classList.remove('active');
+  if (cards) { cards.style.display = 'none'; cards.innerHTML = ''; }
+
+  _updateModeUi();
+}
+
+// Toggle which quick-action button row is visible and whether the
+// "× clear" pill shows next to the patient label, based on whether a
+// patient is selected.
+function _updateModeUi() {
+  const hasPatient = !!selectedPatientId;
+  const pat = document.getElementById('quickActionsPatient');
+  const gen = document.getElementById('quickActionsGeneral');
+  if (pat) pat.style.display = hasPatient ? '' : 'none';
+  if (gen) gen.style.display = hasPatient ? 'none' : '';
+  const clearBtn = document.getElementById('clearPatientBtn');
+  if (clearBtn) clearBtn.style.display = hasPatient ? '' : 'none';
 }
 
 document.addEventListener('click', (e) => {
@@ -1396,6 +1494,10 @@ async function sendMessage() {
 // "Loading patients…" until the response comes back, then hands off to
 // renderDirectory() which builds the directory cards.
 loadPatients();
+
+// Default the UI to general mode (no patient) so the general quick-action
+// row shows and the "× clear" pill stays hidden until a patient is picked.
+_updateModeUi();
 </script>
 </body>
 </html>
