@@ -1352,34 +1352,44 @@ function addMessage(role, content, meta = null, claims = null) {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-// Create an empty assistant bubble we can stream tokens into. Returns the
-// inner content node so the caller can append text deltas as they arrive.
-// The bubble is upgraded to fully-formatted markdown + meta tags once the
-// stream finishes — until then we show plain text so the partial answer is
-// still readable.
-function startStreamingMessage() {
-  const chatArea = document.getElementById('chatArea');
-  const welcome = document.getElementById('chatWelcome');
-  if (welcome) welcome.remove();
+// A lazy assistant bubble: we don't create the DOM node until there's
+// something to put in it (the first streamed token or a final/error
+// message). Showing an empty bubble during the routing phase looks broken
+// — the typing indicator (•••) is the right "I'm thinking" affordance
+// during that window.
+function makeLazyStreamBubble() {
+  let wrapper = null;
+  let content = null;
 
-  const div = document.createElement('div');
-  div.className = 'message assistant streaming';
-  const content = document.createElement('div');
-  content.className = 'message-content';
-  content.textContent = '';
-  div.appendChild(content);
-  chatArea.appendChild(div);
-  chatArea.scrollTop = chatArea.scrollHeight;
-  return { wrapper: div, content: content };
-}
+  function ensure() {
+    if (wrapper) return;
+    const chatArea = document.getElementById('chatArea');
+    const welcome = document.getElementById('chatWelcome');
+    if (welcome) welcome.remove();
 
-// Replace a streaming bubble's plain-text contents with the fully-formatted
-// markdown + meta tags once the final answer + claims arrive.
-function finalizeStreamingMessage(bubble, finalText, meta, claims) {
-  bubble.wrapper.innerHTML = _buildAssistantInnerHtml(finalText, meta, claims);
-  bubble.wrapper.classList.remove('streaming');
-  document.getElementById('chatArea').scrollTop =
-    document.getElementById('chatArea').scrollHeight;
+    wrapper = document.createElement('div');
+    wrapper.className = 'message assistant streaming';
+    content = document.createElement('div');
+    content.className = 'message-content';
+    wrapper.appendChild(content);
+    chatArea.appendChild(wrapper);
+  }
+
+  return {
+    setText(text) {
+      ensure();
+      content.textContent = text;
+      const chatArea = document.getElementById('chatArea');
+      chatArea.scrollTop = chatArea.scrollHeight;
+    },
+    finalize(finalText, meta, claims) {
+      ensure();
+      wrapper.innerHTML = _buildAssistantInnerHtml(finalText, meta, claims);
+      wrapper.classList.remove('streaming');
+      const chatArea = document.getElementById('chatArea');
+      chatArea.scrollTop = chatArea.scrollHeight;
+    },
+  };
 }
 
 async function sendMessage() {
@@ -1399,9 +1409,8 @@ async function sendMessage() {
   document.getElementById('typing').classList.add('active');
   document.getElementById('sendBtn').disabled = true;
 
-  const bubble = startStreamingMessage();
+  const bubble = makeLazyStreamBubble();
   let streamedText = '';
-  let routing = null;
   let finalMeta = null;
   let finalClaims = [];
 
@@ -1449,21 +1458,22 @@ async function sendMessage() {
 
         if (evt.type === 'text') {
           streamedText += evt.delta || '';
-          bubble.content.textContent = streamedText;
-          document.getElementById('chatArea').scrollTop =
-            document.getElementById('chatArea').scrollHeight;
-          // Hide the typing indicator as soon as the first token arrives.
+          // First token — drop the typing indicator and render the bubble.
+          // (The bubble is created lazily inside setText so this also
+          // creates the DOM node on the first call.)
           document.getElementById('typing').classList.remove('active');
-        } else if (evt.type === 'routing') {
-          routing = evt;
+          bubble.setText(streamedText);
         } else if (evt.type === 'meta') {
           finalMeta = evt;
           finalClaims = evt.claims || [];
         } else if (evt.type === 'error') {
-          streamedText = streamedText
-            || '⚠️ The agent could not complete this answer. Please retry.';
-          bubble.content.textContent = streamedText;
+          document.getElementById('typing').classList.remove('active');
+          bubble.setText(streamedText
+            || '⚠️ The agent could not complete this answer. Please retry.');
         }
+        // 'routing' events are discarded — the meta event carries the
+        // same tools_called list, and rendering routing twice would
+        // briefly flash the trace before the answer arrives.
       }
     }
 
@@ -1471,7 +1481,7 @@ async function sendMessage() {
       conversationHistory.push({ role: 'user', content: message });
       conversationHistory.push({ role: 'assistant', content: finalMeta.response });
 
-      finalizeStreamingMessage(bubble, finalMeta.response, {
+      bubble.finalize(finalMeta.response, {
         tools_called: finalMeta.tools_called,
         citations: finalMeta.citations ? finalMeta.citations.length : 0,
         tokens: finalMeta.tokens_used ? finalMeta.tokens_used.total : 0,
@@ -1479,10 +1489,10 @@ async function sendMessage() {
         verified: finalMeta.verified,
       }, finalClaims);
     } else if (!streamedText) {
-      bubble.content.textContent = '⚠️ Could not reach the agent.';
+      bubble.setText('⚠️ Could not reach the agent.');
     }
   } catch (err) {
-    bubble.content.textContent = '⚠️ Could not reach the agent.';
+    bubble.setText('⚠️ Could not reach the agent.');
   }
 
   document.getElementById('typing').classList.remove('active');
