@@ -39,6 +39,14 @@ jobs:
 
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Forward LangSmith credentials so CI eval traces land in the same
+      # `clinical-copilot` project as local + droplet runs. Treated as
+      # optional — the agent's _build_anthropic_client() falls through to
+      # the un-wrapped client when the key isn't set, so eval still works
+      # for forks / PRs that don't have the secret configured.
+      LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+      LANGCHAIN_TRACING_V2: "true"
+      LANGCHAIN_PROJECT: clinical-copilot
 
     steps:
       - uses: actions/checkout@v4
