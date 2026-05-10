@@ -14,12 +14,13 @@ Week 2 added three structural pieces on top of the Week 1 sidecar:
 
 A **58-case boolean-rubric eval suite** gates regression in CI, including a case that walks the import graph to confirm the data-store boundary holds.
 
-After the initial W2 build, five reviewer-driven improvements were added:
+After the initial W2 build, six reviewer-driven improvements were added:
 **(a)** a three-section evidence boundary on clinical-management answers (CHART FINDINGS / EVIDENCE / CONSIDERATIONS) with an imperative-verb ban — gated by a new `evidence_separation` eval bucket;
 **(b)** a routing-trace panel in the chat UI that surfaces every supervisor → worker handoff with reason and per-step latency;
 **(c)** per-call SDK timeouts plus a 120s wall-clock budget enforced inside the supervisor — F-07 (BNP-not-in-chart) went from 8070s on the original baseline to 12s under the cap;
 **(d)** synonym-aware query expansion and a same-source diversity cap in retrieval;
-**(e)** a two-model split — Haiku 4.5 routes, Sonnet 4.5 writes — which dropped per-supervisor-call latency from ~3s to ~1s and shaved ~80s off the full eval (770s → 690s).
+**(e)** a two-model split — Haiku 4.5 routes, Sonnet 4.5 writes — which dropped per-supervisor-call latency from ~3s to ~1s and shaved ~80s off the full eval (770s → 690s);
+**(f)** optional LangSmith tracing — wraps every Anthropic call and decorates each graph node so chat turns surface as a hierarchical trace tree. Gated on `LANGCHAIN_API_KEY`; falls back to a no-op when absent.
 
 A separate **React dashboard** (`dashboard/`) was wired into OpenEMR's `demographics.php` via a same-origin iframe, with four agent-side endpoints (`/labs`, `/coverage`, `/care-team`, `/family-history`) that read from MariaDB directly because OpenEMR's FHIR projection doesn't surface that data.
 
@@ -163,6 +164,8 @@ IntakeFormExtraction | LabPDFExtraction (Pydantic)
 ### 2.1 Idempotency
 
 Re-running `ingest_to_openemr.py` is a no-op for already-ingested files. The dedup key is `documents.name`; the script checks before calling the VLM extractor (so re-runs don't burn API budget). The four backfill helpers below use the same idempotency pattern.
+
+**Self-healing schema migrations.** OpenEMR's stock docker image ships with two issues that block this pipeline if not addressed: `documents.id` lacks `AUTO_INCREMENT` (so every insert past the first lands at id=0 and silently collides), and the `derived_fact_citations` sidecar doesn't exist at all. `ensure_schema()` runs at the top of `main()` and applies both fixes via `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS`, so a fresh deploy or CI run never has to apply SQL by hand. Both statements are idempotent — repeated runs are no-ops.
 
 ### 2.2 Provenance — `derived_fact_citations`
 
@@ -445,6 +448,8 @@ The dashboard's `fetchJson` accepts a `flavor: "fhir" | "rest" | "agent"` so the
 
 Patient `pubpid` is backfilled at ingest time from the MRN printed on the intake form, so FHIR `Patient.identifier` populates correctly. The `pickMrn()` display strips the redundant `MRN-` prefix at render time.
 
+The **chat UI's patient dropdown** (`agent/chat.html`) is also FHIR-driven: at page load, `loadPatients()` calls `/apis/default/fhir/Patient?_count=100`, parses the Bundle, and renders one card per Patient resource (name + DOB + age + sex + MRN). No hardcoded UUIDs — the dropdown stays in sync with whatever is currently in the DB even after re-ingest or a fresh deploy. Empties show "Loading patients…" while the bundle fetches.
+
 ---
 
 ## 11. Routing Transparency (Chat UI Trace)
@@ -466,3 +471,21 @@ Every supervisor handoff has been logged to `state["handoffs"]` since W2 launche
 ```
 
 The chat-side `_renderRoutingTrace(traceId, toolsCalled)` builds the panel; both the conversational flow and the pre-room briefing flow use it. Display-only — supervisor behavior is unchanged.
+
+### 11.1 Optional LangSmith integration
+
+When `LANGCHAIN_API_KEY` (or the equivalent `LANGSMITH_API_KEY`) is present in the environment, `_build_anthropic_client()` wraps the Anthropic SDK with `langsmith.wrappers.wrap_anthropic`, and each graph node — `supervisor`, `intake_extractor`, `evidence_retriever`, `chart_lookup`, `_synthesize_answer`, plus the top-level `run` — is decorated with `@langsmith.traceable`. Every chat turn produces a single trace tree in LangSmith mirroring the LangGraph topology:
+
+```
+clinical_graph_turn
+  ├── supervisor (anthropic.messages.create — Haiku)
+  ├── chart_lookup
+  ├── supervisor (Haiku)
+  ├── evidence_retriever
+  ├── supervisor (Haiku)
+  └── synthesize_answer (anthropic.messages.create — Sonnet)
+```
+
+The integration is fully gated on the env var — if the key is absent (or `langsmith.wrappers` import fails), the agent falls back to the plain Anthropic client and the `@traceable` decorators become no-ops. Non-LangSmith deployments are unaffected.
+
+Both observability paths run in parallel: the in-UI `⚡ N tools` panel surfaces the same data without requiring a LangSmith login, while the LangSmith dashboard adds full prompt + response capture, latency timelines, and historical search across runs. Graders checking the deployed URL can use either.
