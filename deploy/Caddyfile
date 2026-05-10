@@ -26,15 +26,18 @@
 
 openemr.IP-WITH-DASHES.sslip.io {
     # Agent paths — bypass OpenEMR's PHP proxy so SSE actually streams.
+    # /apis/* is included so FHIR calls hit the agent's TTL cache and OAuth
+    # bearer-token injection (the dashboard relies on the agent's proxy
+    # adding `Authorization: Bearer ...` since the React app has no token).
     @agent path /chat /chat/* /ui /ui/* /extract /document/* /dashboard/* \
-                /family-history/* /labs/* /coverage/* /care-team/* /health
+                /apis/* /family-history/* /labs/* /coverage/* /care-team/* /health
     handle @agent {
         reverse_proxy 127.0.0.1:8000 {
             flush_interval -1
         }
     }
 
-    # Everything else (FHIR, OAuth, OpenEMR PHP UI) stays on OpenEMR.
+    # Everything else (OpenEMR's PHP UI / OAuth flows) stays on OpenEMR.
     handle {
         reverse_proxy https://127.0.0.1:9300 {
             transport http {
