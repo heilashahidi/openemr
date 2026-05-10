@@ -81,3 +81,25 @@ python3 eval_clinical_graph.py
 In CI: every push to `agent/**` triggers `.github/workflows/agent-evals.yml`,
 which spins up MariaDB + OpenEMR, seeds the 4 W2 patients, runs the full
 suite, and uploads `eval_clinical_results.json` as a build artifact.
+
+---
+
+## LangSmith Evals (interactive)
+
+`agent/langsmith_eval.py` runs the same 58 cases as a LangSmith
+experiment — same rubric logic, same dataset, but with the LangSmith UI
+on top for interactive drill-down (sortable runs, side-by-side diffs,
+per-category aggregates, click-through into each case's full
+supervisor → worker trace).
+
+```sh
+cd agent
+. .venv/bin/activate
+python3 langsmith_eval.py    # ~10 min — uploads dataset on first run
+```
+
+This is the iteration loop on top of the CI gate, not a replacement —
+`eval_clinical_graph.py` stays the PR-blocking source of truth for
+pass/fail, since it's deterministic, has explicit `min_threshold` floors
+in `eval_baseline.json`, and runs without depending on the LangSmith
+service.
