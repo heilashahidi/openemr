@@ -1,0 +1,52 @@
+# Caddyfile for the OpenEMR clinical co-pilot droplet.
+#
+# Replace IP-WITH-DASHES with your droplet's IP using dashes instead of
+# dots, e.g. 146.190.75.148 → 146-190-75-148. sslip.io resolves any
+# subdomain of <IP-with-dashes>.sslip.io back to that literal IP, so no
+# DNS panel or domain purchase is needed.
+#
+# Two streaming-related things this file gets right that the default
+# doesn't:
+#
+#   1. `flush_interval -1` on every reverse_proxy — Caddy 2 buffers
+#      responses by default, which silently breaks Server-Sent Events.
+#      Setting it to -1 flushes every chunk immediately.
+#
+#   2. Path-based routing on the OpenEMR block — without it, the chat
+#      iframe (loaded from openemr.<IP>.sslip.io/ui) makes its
+#      /chat/stream requests through OpenEMR's PHP proxy, which
+#      buffers SSE end-to-end. Pinning agent paths directly to the
+#      FastAPI service bypasses OpenEMR for those requests.
+#
+# Apply with:
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo sed -i 's/IP-WITH-DASHES/146-190-75-148/g' /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+openemr.IP-WITH-DASHES.sslip.io {
+    # Agent paths — bypass OpenEMR's PHP proxy so SSE actually streams.
+    @agent path /chat /chat/* /ui /ui/* /extract /document/* /dashboard/* \
+                /family-history/* /labs/* /coverage/* /care-team/* /health
+    handle @agent {
+        reverse_proxy 127.0.0.1:8000 {
+            flush_interval -1
+        }
+    }
+
+    # Everything else (FHIR, OAuth, OpenEMR PHP UI) stays on OpenEMR.
+    handle {
+        reverse_proxy https://127.0.0.1:9300 {
+            transport http {
+                tls
+                tls_insecure_skip_verify
+            }
+        }
+    }
+}
+
+agent.IP-WITH-DASHES.sslip.io {
+    reverse_proxy 127.0.0.1:8000 {
+        flush_interval -1
+    }
+}

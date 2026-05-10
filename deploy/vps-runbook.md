@@ -316,19 +316,44 @@ systemctl restart openemr-agent
 hostname — no DNS panel, no domain purchase. Replace dashes for dots:
 `146.190.75.148` → `146-190-75-148`.
 
+The Caddyfile has two key requirements beyond the obvious reverse-proxies:
+
+1. **`flush_interval -1`** on the agent block — Caddy 2 buffers responses by
+   default, which drops the streaming benefit for `/chat/stream` SSE.
+   Setting it to `-1` flushes every chunk immediately.
+2. **Path-based routing on the OpenEMR block** — without it, all agent
+   requests from the chat iframe (`openemr.<IP>.sslip.io/ui`,
+   `/chat/stream`, `/dashboard/*`, etc.) flow through OpenEMR's PHP layer,
+   which buffers SSE end-to-end. Pinning agent paths directly to the
+   FastAPI service via Caddy bypasses OpenEMR for those requests.
+
 ```sh
-cat > /etc/caddy/Caddyfile <<EOF
+cat > /etc/caddy/Caddyfile <<'EOF'
 openemr.<IP-with-dashes>.sslip.io {
-    reverse_proxy https://127.0.0.1:9300 {
-        transport http {
-            tls
-            tls_insecure_skip_verify
+    # Agent paths bypass OpenEMR's PHP proxy so SSE actually streams.
+    @agent path /chat /chat/* /ui /ui/* /extract /document/* /dashboard/* \
+                /family-history/* /labs/* /coverage/* /care-team/* /health
+    handle @agent {
+        reverse_proxy 127.0.0.1:8000 {
+            flush_interval -1
+        }
+    }
+
+    # Everything else (FHIR, OAuth, OpenEMR PHP UI) stays on OpenEMR.
+    handle {
+        reverse_proxy https://127.0.0.1:9300 {
+            transport http {
+                tls
+                tls_insecure_skip_verify
+            }
         }
     }
 }
 
 agent.<IP-with-dashes>.sslip.io {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+        flush_interval -1
+    }
 }
 EOF
 caddy validate --config /etc/caddy/Caddyfile
@@ -336,11 +361,16 @@ systemctl reload caddy
 journalctl -u caddy -n 30 --no-pager    # watch for "certificate obtained successfully"
 ```
 
-Verify both URLs:
+Verify both URLs and that streaming actually streams (no Caddy buffering):
 
 ```sh
 curl -sI https://openemr.<IP-with-dashes>.sslip.io/ | head -1   # → 302
 curl -s https://agent.<IP-with-dashes>.sslip.io/health          # → {"status":"ok"}
+
+# Should print SSE events one at a time, not in a single dump at the end.
+curl -N -s -X POST https://openemr.<IP-with-dashes>.sslip.io/chat/stream \
+    -H 'Content-Type: application/json' \
+    -d '{"patient_id":"","message":"What does the FDA label say about metformin?","conversation_history":[]}'
 ```
 
 ---
