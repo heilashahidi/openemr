@@ -30,7 +30,8 @@ def _build_extraction_client():
         timeout=120,
         max_retries=1,
     )
-    if not os.getenv("LANGSMITH_API_KEY"):
+    # LangSmith historically accepts both naming conventions; check both.
+    if not (os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY")):
         return base
     try:
         from langsmith.wrappers import wrap_anthropic

@@ -76,21 +76,33 @@ PER_CALL_TIMEOUT_S = 60
 PER_CALL_MAX_RETRIES = 1
 TOTAL_BUDGET_S = 120
 
-# Optional LangSmith tracing. If LANGSMITH_API_KEY is set in the environment,
-# every Anthropic API call (supervisor routing + synthesis) gets streamed to
-# the configured LangSmith project. Useful for grader review without having
-# to dig into local JSONL logs. Falls back to a plain Anthropic client when
-# the key is absent — non-LangSmith deployments are unaffected.
+def _langsmith_key():
+    """LangSmith historically accepted both LANGCHAIN_* and the newer
+    LANGSMITH_* env-var names. Check both so an existing .env with
+    LANGCHAIN_API_KEY still enables tracing here."""
+    return os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY")
+
+
+# Optional LangSmith tracing. If LANGSMITH_API_KEY (or LANGCHAIN_API_KEY) is
+# set, every Anthropic API call (supervisor routing + synthesis) gets
+# streamed to the configured LangSmith project. Useful for grader review
+# without digging into local JSONL logs. Falls back to a plain Anthropic
+# client when the key is absent — non-LangSmith deployments are unaffected.
 def _build_anthropic_client():
     base = Anthropic(timeout=PER_CALL_TIMEOUT_S, max_retries=PER_CALL_MAX_RETRIES)
-    if not os.getenv("LANGSMITH_API_KEY"):
+    if not _langsmith_key():
         return base
     try:
         from langsmith.wrappers import wrap_anthropic
-        os.environ.setdefault("LANGSMITH_TRACING", "true")
-        os.environ.setdefault("LANGSMITH_PROJECT", "clinical-copilot")
+        # langsmith reads LANGCHAIN_TRACING_V2 too — set whichever the user
+        # didn't, so both naming styles work.
+        if not os.getenv("LANGSMITH_TRACING") and not os.getenv("LANGCHAIN_TRACING_V2"):
+            os.environ["LANGSMITH_TRACING"] = "true"
+        if not os.getenv("LANGSMITH_PROJECT") and not os.getenv("LANGCHAIN_PROJECT"):
+            os.environ["LANGSMITH_PROJECT"] = "clinical-copilot"
+        project = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT")
         wrapped = wrap_anthropic(base)
-        print(f"  ✅ LangSmith tracing enabled (project={os.environ['LANGSMITH_PROJECT']})")
+        print(f"  ✅ LangSmith tracing enabled (project={project})")
         return wrapped
     except Exception as exc:  # pragma: no cover
         print(f"  ⚠️ LangSmith wrap failed, falling back to plain Anthropic: {exc}")
@@ -103,7 +115,7 @@ _client = _build_anthropic_client()
 # Decorating each graph node + the synthesis call gives LangSmith a tree view
 # of one full chat turn instead of a flat list of Anthropic API calls.
 def _maybe_traceable(name: str):
-    if not os.getenv("LANGSMITH_API_KEY"):
+    if not _langsmith_key():
         def _noop(fn):
             return fn
         return _noop
