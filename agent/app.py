@@ -10,7 +10,7 @@ import requests
 import urllib3
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -22,7 +22,12 @@ from document_extractor import extract_document
 from pathlib import Path
 
 # Week 2 graph — replaces the single-LLM-with-tools loop for /chat.
-from clinical_graph import run as graph_run
+from clinical_graph import (
+    run as graph_run,
+    run_for_stream as graph_run_for_stream,
+    synthesize_stream,
+)
+from clinical_logger import log_encounter, estimate_cost_usd
 from ingest_to_openemr import run_sql as _run_sql
 
 urllib3.disable_warnings()
@@ -240,6 +245,137 @@ async def chat(req: ChatRequest):
     )
 
 
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Streaming chat — drops time-to-first-token from ~20s to ~3s.
+
+    Wire format: Server-Sent Events. Each event is a JSON object framed
+    with `data: ` and a blank line, per the SSE spec. Event kinds:
+        {"type":"routing","tools_called":[...]}     after the graph routes
+        {"type":"text","delta":"..."}               for each synthesis token
+        {"type":"meta", citations/claims/usage/...} once the answer completes
+        {"type":"error","message":"..."}            on synthesis failure
+
+    The routing/retrieval phases run synchronously (they're fast — usually
+    sub-second). Synthesis is the slow LLM call, and that's the part we
+    stream so the chat bubble fills in live instead of staring at a spinner.
+    """
+    get_openemr_token()
+
+    pid_int = _pid_from_fhir_uuid(req.patient_id) or 0
+    query = req.message
+
+    def _sse(payload: dict) -> bytes:
+        return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+
+    def event_stream():
+        t_start = time.time()
+        # Phase 1: run the graph through routing + retrieval, but stop
+        # before synthesis so we can stream tokens.
+        try:
+            state = graph_run_for_stream(query, patient_id=pid_int)
+        except Exception as exc:
+            yield _sse({"type": "error",
+                        "message": f"graph failed: {type(exc).__name__}"})
+            return
+
+        chart = state.get("chart") or {}
+        evidence = state.get("evidence") or []
+        handoffs = state.get("handoffs") or []
+        routing_usage = dict(state.get("usage") or {})
+
+        tools_called = [
+            {
+                "tool": f"{h.get('from')}->{h.get('to')}",
+                "from": h.get("from", ""),
+                "to": h.get("to", ""),
+                "reason": h.get("reason", ""),
+                "elapsed_ms": h.get("elapsed_ms", 0),
+            }
+            for h in handoffs
+        ]
+        citations = _flatten_chart_citations(chart) + _evidence_citations(evidence)
+
+        # Tell the UI which workers ran so it can render the routing trace
+        # before the first synthesis token even arrives.
+        yield _sse({
+            "type": "routing",
+            "tools_called": tools_called,
+            "evidence_count": len(evidence),
+            "elapsed_ms": round((time.time() - t_start) * 1000, 1),
+        })
+
+        # Phase 2: stream synthesis tokens.
+        answer = ""
+        claims: list = []
+        synth_usage: dict = {}
+        for kind, payload in synthesize_stream(state):
+            if kind == "text":
+                yield _sse({"type": "text", "delta": payload})
+            elif kind == "done":
+                answer = payload.get("answer") or ""
+                claims = payload.get("claims") or []
+                synth_usage = payload.get("usage") or {}
+            elif kind == "error":
+                yield _sse({"type": "error", "message": payload})
+                return
+
+        # Final tally — combine routing + synthesis token counts.
+        merged_input = (routing_usage.get("input", 0) or 0) + (synth_usage.get("input", 0) or 0)
+        merged_output = (routing_usage.get("output", 0) or 0) + (synth_usage.get("output", 0) or 0)
+        usage = {
+            "input": merged_input,
+            "output": merged_output,
+            "total": merged_input + merged_output,
+        }
+        total_latency_ms = round((time.time() - t_start) * 1000, 1)
+
+        yield _sse({
+            "type": "meta",
+            "response": answer,
+            "citations": citations,
+            "claims": claims,
+            "tools_called": tools_called,
+            "tokens_used": usage,
+            "verified": bool(answer),
+            "total_latency_ms": total_latency_ms,
+            "evidence_count": len(evidence),
+        })
+
+        # Mirror the encounter-log call that graph_run() does in the
+        # non-streaming path so we don't lose observability for streamed turns.
+        try:
+            log_encounter({
+                "query": query,
+                "patient_id": pid_int or None,
+                "file_path": None,
+                "tool_sequence": [f"{h.get('from')}→{h.get('to')}" for h in handoffs],
+                "latency_per_step_ms": [h.get("elapsed_ms") for h in handoffs],
+                "total_latency_ms": total_latency_ms,
+                "tokens_used": usage,
+                "cost_estimate_usd": estimate_cost_usd(usage),
+                "retrieval_hits": len(evidence),
+                "extraction_confidence": None,
+                "claims_count": len(claims),
+                "answer_length_chars": len(answer),
+                "timed_out": bool(state.get("timed_out")),
+                "eval_outcome": None,
+            })
+        except Exception:
+            # Logging must never break the stream.
+            pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy buffering so Caddy / nginx forward each chunk
+            # immediately. Without this, the whole stream can be buffered
+            # to completion and arrive as one block.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/extract")

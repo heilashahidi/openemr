@@ -158,6 +158,7 @@ class GraphState(TypedDict, total=False):
     next: Optional[str]                    # Supervisor's next-step decision
     deadline_ts: Optional[float]           # Wall-clock deadline; supervisor forces finish past it
     timed_out: Optional[bool]              # True when the run hit the budget
+    skip_synthesis: Optional[bool]         # When True, supervisor returns at "finish" without calling synthesis
 
 
 # ── Supervisor ─────────────────────────────────────────────────────────────
@@ -495,14 +496,11 @@ def _build_claims_catalog(state: GraphState) -> list[dict]:
     return catalog
 
 
-@_maybe_traceable("synthesize_answer")
-def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
-    """Second LLM call — returns (answer_markdown, claims, token_usage).
+def _build_synthesis_inputs(state: GraphState) -> tuple[str, list[dict], list[dict]]:
+    """Build (system, messages, catalog) shared by sync + streaming synthesis.
 
-    The model is given a numbered citation catalog and instructed to use
-    `[N]` markers in its answer text. The catalog comes back as the
-    machine-readable `claims` array — every entry has the required five
-    fields and an optional PDF bbox.
+    Pulled out so the streaming path doesn't have to duplicate prompt assembly
+    and stay in lockstep with the non-streaming path.
     """
     query = state.get("query") or ""
     catalog = _build_claims_catalog(state)
@@ -534,17 +532,26 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
             "Numbered citation catalog (use [N] markers in your answer to cite):\n" + cat_lines
         )
 
-    # Apply the W1 briefing template when the question is a pre-room briefing
-    # so the format stays stable across all patients. Apply the management
-    # three-section format when the question asks about clinical management
-    # so the answer reads as decision support, not an order.
     extra_format = ""
     if _is_briefing(query):
         extra_format = _BRIEFING_FORMAT
     elif _is_management_question(query):
         extra_format = _MANAGEMENT_FORMAT
     system = _ANSWER_SYSTEM + _CITATION_MARKER_RULE + extra_format
+    messages = [{"role": "user", "content": "\n\n".join(parts)}]
+    return system, messages, catalog
 
+
+@_maybe_traceable("synthesize_answer")
+def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
+    """Second LLM call — returns (answer_markdown, claims, token_usage).
+
+    The model is given a numbered citation catalog and instructed to use
+    `[N]` markers in its answer text. The catalog comes back as the
+    machine-readable `claims` array — every entry has the required five
+    fields and an optional PDF bbox.
+    """
+    system, messages, catalog = _build_synthesis_inputs(state)
     try:
         # 1024 tokens ≈ 700 words — comfortably above the 240-word target
         # in _MANAGEMENT_FORMAT and the ~150-word briefing format, while
@@ -555,7 +562,7 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
             model=MODEL,
             max_tokens=1024,
             system=system,
-            messages=[{"role": "user", "content": "\n\n".join(parts)}],
+            messages=messages,
         )
     except (APITimeoutError, APIConnectionError) as exc:
         # Graceful degradation when the SDK timeout fires (PER_CALL_TIMEOUT_S
@@ -570,10 +577,48 @@ def _synthesize_answer(state: GraphState) -> tuple[str, list[dict], dict]:
         return msg, [], {}
     answer = resp.content[0].text.strip()
 
-    # Only return the subset of catalog entries the model actually cited.
     used_ids = set(int(m) for m in re.findall(r"\[(\d+)\]", answer))
     claims_used = [c for c in catalog if c["id"] in used_ids]
     return answer, claims_used, _usage_dict(resp)
+
+
+def synthesize_stream(state: GraphState):
+    """Generator that streams synthesis tokens via the Anthropic SDK.
+
+    Yields tuples:
+        ("text", str)               — a text delta as it arrives
+        ("done", {claims, usage})   — once the stream completes cleanly
+        ("error", str)              — on SDK timeout / connection failure
+
+    The caller is responsible for the routing/retrieval phases — this
+    function only handles the final synthesis call.
+    """
+    system, messages, catalog = _build_synthesis_inputs(state)
+    collected: list[str] = []
+    try:
+        with _client.messages.stream(
+            model=MODEL,
+            max_tokens=1024,
+            system=system,
+            messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                if text:
+                    collected.append(text)
+                    yield ("text", text)
+            final_msg = stream.get_final_message()
+    except (APITimeoutError, APIConnectionError) as exc:
+        yield ("error", f"{type(exc).__name__}: {exc}")
+        return
+
+    answer = "".join(collected).strip()
+    used_ids = set(int(m) for m in re.findall(r"\[(\d+)\]", answer))
+    claims_used = [c for c in catalog if c["id"] in used_ids]
+    yield ("done", {
+        "answer": answer,
+        "claims": claims_used,
+        "usage": _usage_dict(final_msg),
+    })
 
 
 @_maybe_traceable("supervisor")
@@ -623,13 +668,18 @@ def supervisor(state: GraphState) -> GraphState:
     if over_budget:
         update["timed_out"] = True
     if decision["next"] == "finish":
-        answer, claims, syn_usage = _synthesize_answer(state)
-        update["final_answer"] = answer
-        update["claims"] = claims
-        # Combine routing-call usage and synthesis-call usage for this turn.
-        update["usage"] = _merge_usage(usage, syn_usage)
-        # Replace the elapsed time with total (routing + synthesis).
-        update["handoffs"][0]["elapsed_ms"] = round((time.time() - t0) * 1000, 1)
+        if state.get("skip_synthesis"):
+            # Streaming path: caller will run synthesis externally so it can
+            # forward token deltas to the client. Leave final_answer/claims
+            # unset; the routing trace + collected chart/evidence are what
+            # /chat/stream needs out of the graph.
+            update["handoffs"][0]["elapsed_ms"] = round((time.time() - t0) * 1000, 1)
+        else:
+            answer, claims, syn_usage = _synthesize_answer(state)
+            update["final_answer"] = answer
+            update["claims"] = claims
+            update["usage"] = _merge_usage(usage, syn_usage)
+            update["handoffs"][0]["elapsed_ms"] = round((time.time() - t0) * 1000, 1)
     return update
 
 
@@ -989,6 +1039,36 @@ def run(query: str, file_path: str = "", doc_type: str = "", patient_id: int = 0
         "timed_out": bool(result.get("timed_out")),
         "eval_outcome": eval_outcome,
     })
+    return result
+
+
+def run_for_stream(query: str, file_path: str = "", doc_type: str = "",
+                   patient_id: int = 0) -> dict:
+    """Like `run`, but stops before synthesis so the caller can stream it.
+
+    Sets `skip_synthesis=True` in the initial state, which makes supervisor
+    return at "finish" without invoking _synthesize_answer. The terminal
+    state contains `chart`, `evidence`, `extraction`, and `handoffs` —
+    everything `synthesize_stream` needs to start producing tokens.
+
+    Encounter logging is skipped here; the streaming endpoint logs once it
+    has the final answer and total latency.
+    """
+    t_total_start = time.time()
+    initial: GraphState = {
+        "query": query,
+        "handoffs": [],
+        "usage": {},
+        "deadline_ts": t_total_start + TOTAL_BUDGET_S,
+        "skip_synthesis": True,
+    }
+    if file_path:
+        initial["file_path"] = file_path
+        initial["doc_type"] = doc_type or "intake_form"
+    if patient_id:
+        initial["patient_id"] = patient_id
+
+    result = GRAPH.invoke(initial)
     return result
 
 

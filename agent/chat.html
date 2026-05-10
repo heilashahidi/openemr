@@ -1192,18 +1192,12 @@ function _renderRoutingTrace(traceId, toolsCalled) {
   return `<div id="${traceId}" class="routing-trace">${steps}</div>`;
 }
 
-function addMessage(role, content, meta = null, claims = null) {
-  const chatArea = document.getElementById('chatArea');
-  const welcome = document.getElementById('chatWelcome');
-  if (welcome) welcome.remove();
-
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-
-  // Register this turn's claims and convert [N] markers BEFORE the other
-  // markdown replacements so the chip HTML survives intact.
+// Format an assistant turn's body — markdown-lite, [N] citation chips, FHIR
+// source badges. Pulled out of addMessage so the streaming finalizer can
+// reuse the exact same renderer without DOM-swapping tricks.
+function _buildAssistantInnerHtml(content, meta, claims) {
   const localToGlobal = _registerClaims(claims);
-  let html = _replaceCiteMarkers(content, localToGlobal)
+  const html = _replaceCiteMarkers(content, localToGlobal)
     .replace(/## (.*)/g, '<h2>$1</h2>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n- /g, '\n• ')
@@ -1235,9 +1229,59 @@ function addMessage(role, content, meta = null, claims = null) {
     metaHtml += '</div>';
   }
 
-  div.innerHTML = `<div class="message-content">${html}</div>${metaHtml}${traceHtml}`;
+  return `<div class="message-content">${html}</div>${metaHtml}${traceHtml}`;
+}
+
+function addMessage(role, content, meta = null, claims = null) {
+  const chatArea = document.getElementById('chatArea');
+  const welcome = document.getElementById('chatWelcome');
+  if (welcome) welcome.remove();
+
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+
+  if (role === 'assistant') {
+    div.innerHTML = _buildAssistantInnerHtml(content, meta, claims);
+  } else {
+    // User turns are plain text — no markdown, no citation chips.
+    const safe = String(content)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    div.innerHTML = `<div class="message-content">${safe}</div>`;
+  }
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// Create an empty assistant bubble we can stream tokens into. Returns the
+// inner content node so the caller can append text deltas as they arrive.
+// The bubble is upgraded to fully-formatted markdown + meta tags once the
+// stream finishes — until then we show plain text so the partial answer is
+// still readable.
+function startStreamingMessage() {
+  const chatArea = document.getElementById('chatArea');
+  const welcome = document.getElementById('chatWelcome');
+  if (welcome) welcome.remove();
+
+  const div = document.createElement('div');
+  div.className = 'message assistant streaming';
+  const content = document.createElement('div');
+  content.className = 'message-content';
+  content.textContent = '';
+  div.appendChild(content);
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  return { wrapper: div, content: content };
+}
+
+// Replace a streaming bubble's plain-text contents with the fully-formatted
+// markdown + meta tags once the final answer + claims arrive.
+function finalizeStreamingMessage(bubble, finalText, meta, claims) {
+  bubble.wrapper.innerHTML = _buildAssistantInnerHtml(finalText, meta, claims);
+  bubble.wrapper.classList.remove('streaming');
+  document.getElementById('chatArea').scrollTop =
+    document.getElementById('chatArea').scrollHeight;
 }
 
 async function sendMessage() {
@@ -1257,8 +1301,14 @@ async function sendMessage() {
   document.getElementById('typing').classList.add('active');
   document.getElementById('sendBtn').disabled = true;
 
+  const bubble = startStreamingMessage();
+  let streamedText = '';
+  let routing = null;
+  let finalMeta = null;
+  let finalClaims = [];
+
   try {
-    const resp = await fetch(`${AGENT_URL}/chat`, {
+    const resp = await fetch(`${AGENT_URL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1268,19 +1318,73 @@ async function sendMessage() {
       }),
     });
 
-    const data = await resp.json();
-    conversationHistory.push({ role: 'user', content: message });
-    conversationHistory.push({ role: 'assistant', content: data.response });
+    if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
-    addMessage('assistant', data.response, {
-      tools_called: data.tools_called,
-      citations: data.citations ? data.citations.length : 0,
-      tokens: data.tokens_used ? data.tokens_used.total : 0,
-      total_latency_ms: data.total_latency_ms || 0,
-      verified: data.verified,
-    }, data.claims);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    // SSE framing: events are separated by a blank line. Each event has
+    // one or more `data: ` lines whose payloads concatenate.
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+
+        const dataLines = raw
+          .split('\n')
+          .filter(l => l.startsWith('data: '))
+          .map(l => l.slice(6));
+        if (!dataLines.length) continue;
+
+        let evt;
+        try {
+          evt = JSON.parse(dataLines.join('\n'));
+        } catch (e) {
+          continue;
+        }
+
+        if (evt.type === 'text') {
+          streamedText += evt.delta || '';
+          bubble.content.textContent = streamedText;
+          document.getElementById('chatArea').scrollTop =
+            document.getElementById('chatArea').scrollHeight;
+          // Hide the typing indicator as soon as the first token arrives.
+          document.getElementById('typing').classList.remove('active');
+        } else if (evt.type === 'routing') {
+          routing = evt;
+        } else if (evt.type === 'meta') {
+          finalMeta = evt;
+          finalClaims = evt.claims || [];
+        } else if (evt.type === 'error') {
+          streamedText = streamedText
+            || '⚠️ The agent could not complete this answer. Please retry.';
+          bubble.content.textContent = streamedText;
+        }
+      }
+    }
+
+    if (finalMeta) {
+      conversationHistory.push({ role: 'user', content: message });
+      conversationHistory.push({ role: 'assistant', content: finalMeta.response });
+
+      finalizeStreamingMessage(bubble, finalMeta.response, {
+        tools_called: finalMeta.tools_called,
+        citations: finalMeta.citations ? finalMeta.citations.length : 0,
+        tokens: finalMeta.tokens_used ? finalMeta.tokens_used.total : 0,
+        total_latency_ms: finalMeta.total_latency_ms || 0,
+        verified: finalMeta.verified,
+      }, finalClaims);
+    } else if (!streamedText) {
+      bubble.content.textContent = '⚠️ Could not reach the agent.';
+    }
   } catch (err) {
-    addMessage('assistant', '⚠️ Could not reach the agent.');
+    bubble.content.textContent = '⚠️ Could not reach the agent.';
   }
 
   document.getElementById('typing').classList.remove('active');
