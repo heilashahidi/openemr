@@ -6,6 +6,7 @@ FastAPI app that uses Claude to answer PCP questions about patients via OpenEMR 
 import os
 import json
 import time
+import asyncio
 import functools
 import requests
 import urllib3
@@ -614,7 +615,11 @@ async def openemr_api_proxy(rest_path: str, request: Request):
     if method != "GET" and request.headers.get("content-type"):
         headers["Content-Type"] = request.headers["content-type"]
 
-    resp = requests.request(
+    # Run the blocking `requests` call in a thread so it doesn't stall the
+    # event loop. The dashboard fires ~10 FHIR widgets in parallel; without
+    # this offload they serialize behind a single OpenEMR round-trip.
+    resp = await asyncio.to_thread(
+        requests.request,
         method,
         target,
         data=body if body else None,
