@@ -299,12 +299,21 @@ def _resolve_document_path(document_id: int) -> Path:
     return path
 
 
+# Source documents are immutable once ingested (filename = dedup key, no
+# in-place updates), so the browser can safely cache them aggressively.
+# Set 1-hour Cache-Control with `immutable` so re-clicking a citation
+# during the same demo session doesn't re-fetch the PDF + re-rasterize
+# the page each time. First click pays the streaming cost; subsequent
+# clicks are served from the browser's cache instantly.
+_DOC_CACHE_HEADERS = {"Cache-Control": "public, max-age=3600, immutable"}
+
+
 @app.get("/document/{document_id}/file")
 async def document_file(document_id: int):
     """Serve the original PDF/PNG for a given document_id."""
     path = _resolve_document_path(document_id)
     media = "application/pdf" if path.suffix.lower() == ".pdf" else "image/png"
-    return FileResponse(path, media_type=media)
+    return FileResponse(path, media_type=media, headers=_DOC_CACHE_HEADERS)
 
 
 @app.get("/document/{document_id}/page/{page_num}.png")
@@ -316,7 +325,7 @@ async def document_page_png(document_id: int, page_num: int):
     """
     path = _resolve_document_path(document_id)
     if path.suffix.lower() != ".pdf":
-        return FileResponse(path, media_type="image/png")
+        return FileResponse(path, media_type="image/png", headers=_DOC_CACHE_HEADERS)
     try:
         import fitz  # type: ignore[import-not-found]
     except ImportError:
@@ -331,7 +340,7 @@ async def document_page_png(document_id: int, page_num: int):
     png_bytes = pix.tobytes("png")
     doc.close()
     from fastapi.responses import Response
-    return Response(content=png_bytes, media_type="image/png")
+    return Response(content=png_bytes, media_type="image/png", headers=_DOC_CACHE_HEADERS)
 
 
 @app.get("/document/{document_id}/view")
@@ -343,7 +352,14 @@ async def document_view(document_id: int):
       bboxes=JSON   list of {page,x0,y0,x1,y1,page_width,page_height}
                     matching what's stored in derived_fact_citations.bbox_json
     """
-    return FileResponse(Path(__file__).parent / "doc_viewer.html", media_type="text/html")
+    # The viewer HTML is small (<10 KB) and does change when we tweak the
+    # overlay logic, so don't make it `immutable` — but a short cache is
+    # fine to skip re-fetching on every citation click in the same session.
+    return FileResponse(
+        Path(__file__).parent / "doc_viewer.html",
+        media_type="text/html",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 # ── Patient dashboard (React) — embedded into OpenEMR's demographics page ──
