@@ -282,6 +282,11 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/openemr/agent
 EnvironmentFile=/opt/openemr/agent/.env
+# Force unbuffered stdout so module-level print() output (LangSmith init
+# banner, corpus-index banner) reaches the journal in real time. Without
+# this, Python block-buffers stdout for non-TTYs and startup diagnostics
+# only flush when the buffer fills or the process exits.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/openemr/agent/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
