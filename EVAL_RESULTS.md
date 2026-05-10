@@ -1,9 +1,11 @@
 # Clinical Co-Pilot — Evaluation Results
 
-**Date:** May 9, 2026
+**Date:** May 10, 2026
 **Suite:** `agent/eval_clinical_graph.py` (W2, 58 boolean-rubric cases)
-**Total: 58/58 passing (100.0%)** in **610.9s** (~10.2 min)
+**Total: 58/58 passing (100.0%)** in **591.2s** (~9.9 min)
 **Baseline gate: pass**
+
+Latest CI run: [`Agent evals · 25622003752`](https://github.com/heilashahidi/openemr/actions/runs/25622003752) on commit `c95608915`.
 
 The full per-case JSON lives in [`agent/eval_clinical_results.json`](agent/eval_clinical_results.json).
 CI runs the same suite on every push to `agent/**` — see
@@ -57,7 +59,8 @@ Tracked because it's the second-biggest reviewer feedback item.
 | W2 baseline (all-Sonnet) | ~770s | initial 50-case suite |
 | Post-tightening (mgmt answers) | 690s | shorter answers (4400→1800 chars) |
 | Haiku for routing | 690s | supervisor calls 3.0s → 1.0s each |
-| Latest | **611s** | warm cache + tightened budgets |
+| Warm cache + budgets | 611s | retrieval index reused across cases |
+| Latest | **591s** | chunker drops 53 metadata stubs; cross-encoder bypass on resource-constrained hosts; SSE streaming on /chat |
 
 F-07 (Whitaker BNP-not-in-chart) — the original pathological case at 8070s
 on the unbounded baseline — now consistently runs in **~12s** under the
