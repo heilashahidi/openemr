@@ -29,6 +29,12 @@ worker handoff trace.
 The deployment is a single $6/mo DigitalOcean droplet (Caddy + Docker
 + FastAPI agent) — survives reboots and crashes; no laptop dependency.
 
+### Verifying
+
+- **Eval gate** — 58/58 boolean rubrics, blocking in CI. See the badge at the top of [`README_W2.md`](README_W2.md), per-bucket detail in [`EVAL_RESULTS.md`](EVAL_RESULTS.md), per-case JSON in [`agent/eval_clinical_results.json`](agent/eval_clinical_results.json).
+- **LangSmith traces** — every chat call streams a supervisor→worker trace tree to https://smith.langchain.com/ (project `clinical-copilot`) when `LANGCHAIN_API_KEY` is set in the agent's `.env`. The same trace is visible inline via the chat UI's clickable **⚡ N tools** tag — no LangSmith login required.
+- **PHI-safe encounter logs** — `agent/clinical_logger.py` writes a redacted JSONL record per turn (`tool_sequence`, `latency_per_step_ms`, `tokens_used`, `cost_estimate_usd`, `retrieval_hits`). Verified by 10 `no_phi_in_logs` eval cases.
+
 ---
 
 ## B. Run it locally (~10 min)
