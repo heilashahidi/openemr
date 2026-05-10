@@ -4,12 +4,35 @@
 
 > Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 58-case boolean-rubric eval suite gates regression in CI — see [`EVAL_RESULTS.md`](EVAL_RESULTS.md) for the latest run.
 
-**Companion docs:** `ARCHITECTURE_W2.md` (the design narrative), `README_W1.md` (the Week 1 baseline this builds on).
+**Companion docs:** [`DEPLOY.md`](DEPLOY.md) (5-min walkthrough for graders), `ARCHITECTURE_W2.md` (the design narrative), `README_W1.md` (the Week 1 baseline this builds on).
 
-**Deployed URLs:**
-- OpenEMR: `https://backlog-troubling-unfold.ngrok-free.dev`
-- Agent: `https://agent-copilot.ngrok-free.dev`
+**Deployed URLs (final submission):**
+- OpenEMR + co-pilot: `https://openemr.146-190-75-148.sslip.io/`
+- Agent direct (for SSE / smoke tests): `https://agent.146-190-75-148.sslip.io/`
 - Login: `admin` / `pass`
+
+Hosted on a single $12/mo DigitalOcean droplet (Caddy + Docker + systemd-managed FastAPI agent). Survives reboots, no laptop dependency. Reproducible from scratch via [`deploy/vps-runbook.md`](deploy/vps-runbook.md) + [`deploy/Caddyfile`](deploy/Caddyfile).
+
+---
+
+## Final-Submission Status
+
+| Reviewer rubric | Status | Where to verify |
+|---|---|---|
+| Stable deployed app | ✅ | `https://openemr.146-190-75-148.sslip.io/` (single droplet, Caddy + systemd, survives reboot) |
+| Reliable ingestion | ✅ | `agent/ingest_to_openemr.py` self-heals schema on startup; 4 patients seeded from `agent/sample_docs/intake-forms/` |
+| Reliable retrieval | ✅ | 148-chunk index over 30 external guidelines; chunker filter drops metadata stubs (`fix(retrieval): drop title-only and citation-stub chunks`) |
+| Supervisor + worker orchestration | ✅ | `agent/clinical_graph.py` LangGraph; routing trace inline via "⚡ N tools" chip in chat UI |
+| Citation enforcement | ✅ | `[N]` markers + `claims[]` (5 required fields); side panel + bbox overlay on click |
+| Eval thresholds + regression blocking | ✅ | `agent/eval_baseline.json`; **branch protection on `master` requires the `eval` check before merge** |
+| Latest CI run | ✅ | **58/58 in 609.7s** on commit `7a14168b4` — [Agent evals · 25622649510](https://github.com/heilashahidi/openemr/actions/runs/25622649510) |
+| PHI-safe logging | ✅ | `agent/clinical_logger.py` redacts before write; 10/10 `no_phi_in_logs` cases verify |
+| Latency reduction | ✅ | Eval 770s → 591s; chat TTFT ~3-8s via SSE streaming; 60s FHIR cache; LRU rasterized-page cache |
+| Runtime observability | ✅ | LangSmith traces (`clinical-copilot` project) on droplet + CI; encounter logs on disk |
+| Retrieval grounding | ✅ | Hybrid BM25 + dense + diversify; cross-encoder fallback with `DISABLE_CROSS_ENCODER` opt-out for resource-constrained hosts |
+| bbox + source tracing | ✅ | `derived_fact_citations.bbox_json` populated by `backfill_bboxes.py`; `/document/<id>/view` overlays in browser |
+
+For the 5-min demo path that exercises every line of this table in sequence, see [`DEPLOY.md`](DEPLOY.md) → "Demo path".
 
 ---
 
@@ -19,7 +42,7 @@
 |---|---|
 | **Document ingestion** (`agent/ingest_to_openemr.py` + `document_extractor.py`) | Accepts a PDF/PNG, extracts structured JSON via Claude VLM, copies the source file into OpenEMR's document storage, writes facts into FHIR-exposed tables (prescriptions, lists, procedure_*, history_data, etc.), and links each fact back to its source via `derived_fact_citations`. |
 | **LangGraph supervisor** (`agent/clinical_graph.py`) | A supervisor + three workers (`intake_extractor`, `evidence_retriever`, `chart_lookup`). Workers always return to the supervisor; every transition is logged in `state["handoffs"]`. The supervisor decides termination — workers don't. |
-| **External-only RAG** (`agent/evidence_retriever.py` + `fetch_external_guidelines.py`) | The vector DB no longer indexes patient notes. It holds a 30-doc corpus fetched from OpenFDA (drug labels) and PubMed (guideline abstracts). 201 chunks indexed via hybrid BM25 (0.4) + dense (0.6) → cross-encoder reranker → same-source diversity cap. |
+| **External-only RAG** (`agent/evidence_retriever.py` + `fetch_external_guidelines.py`) | The vector DB no longer indexes patient notes. It holds a 30-doc corpus fetched from OpenFDA (drug labels) and PubMed (guideline abstracts). 148 chunks indexed via hybrid BM25 (0.4) + dense (0.6) → cross-encoder reranker → same-source diversity cap. (Was 201 before the chunker filter dropped 53 title-only and citation-URL stubs that were gaming BM25 length normalization.) |
 | **`/chat` rewired** (`agent/app.py`) | The existing `/chat` endpoint now invokes `clinical_graph.run()` behind the W1 OAuth gate. The iframe UI doesn't change. Token usage, total latency, and handoff trace surface in the response. |
 | **React patient dashboard** (`dashboard/`) | Vite + React + TS port of OpenEMR's demographics view: 12 widgets (Demographics, Patient Header, Medications, Allergies, Conditions, Encounters, Labs, Vitals, Insurance, Immunizations, Family History, Documents, Care Team) backed by FHIR R4 + four agent endpoints. Embedded into OpenEMR's `demographics.php` via a same-origin iframe. |
 | **Eval gate** (`agent/eval_clinical_graph.py` + CI) | 58 cases × boolean rubrics across 6 buckets. CI fails on regression below the per-bucket baseline. |
@@ -37,6 +60,10 @@ Four reviewer-driven changes after the initial W2 build, all still 58/58 in eval
 | **Latency caps** — per-call SDK timeout (60s chat / 120s vision, `max_retries=1`) and 120s end-to-end wall-clock budget. Supervisor checks `deadline_ts` before each routing call; past it, forces `finish` and runs synthesis on whatever was collected. Synthesis catches `APITimeoutError`/`APIConnectionError` and returns a graceful message. | `clinical_graph.py` — `PER_CALL_TIMEOUT_S`, `TOTAL_BUDGET_S`, `state["deadline_ts"]`, `state["timed_out"]`. | F-07 (BNP-not-in-chart) went from 8070s → 12s. Full eval 690–770s end-to-end. |
 | **Two-model split: Haiku 4.5 routes, Sonnet 4.5 writes** — supervisor routing decisions (one of three workers + a one-line reason) run on Haiku, which is ~3× faster than Sonnet for that micro-prompt. The synthesis call that produces the actual clinical answer still runs on Sonnet. `_parse_json` was hardened to use `JSONDecoder.raw_decode` because Haiku occasionally appends a short tail after the JSON. | `clinical_graph.py` — `ROUTING_MODEL = "claude-haiku-4-5-20251001"`, `_parse_json` rewritten. | Per supervisor call ~3s → ~1s. Management-question end-to-end ~33s → ~29s; lookup queries ~12s → ~6s. Full eval 770s → 690s. |
 | **Retrieval quality** — 12-group synonym expansion (lipid, anticoagulation, diabetes, …) finds chunks that don't lexically match the query (e.g. a "statin" question lights up `fda_drug_atorvastatin.md`). Hard 2-per-source diversity cap so the LLM never sees three chunks from one FDA label when the corpus has 30 docs. | `evidence_retriever.py` — `_SYNONYM_GROUPS`, `_expand_query()`, `_diversify()`. | Same eval pass-rate, qualitatively more diverse evidence in retrieval traces. |
+| **Chunker filter** — drops 53 of 201 chunks (title-only Introduction, citation-URL Source) that gamed BM25 length normalization and outranked substantive sections. Metformin "Contraindications" went from out-of-top-10 to top 5 for the relevant query. | `evidence_retriever.py` — `_is_substantive()`, `_MIN_CHUNK_WORDS`. | Same 58/58, retrieval grounding visibly more on-topic. |
+| **`/chat/stream` SSE streaming** — tokens flow into the chat bubble live (~3-8s time-to-first-token vs the prior ~20s wait-then-dump). Caddy `flush_interval -1` + `X-Accel-Buffering: no` prevent proxy buffering. The synchronous `/chat` endpoint still exists for callers that need a single JSON blob. | `app.py` — `/chat/stream` + `synthesize_stream` + `run_for_stream`; `chat.html` lazy-bubble streaming reader; `deploy/Caddyfile` flush + `/apis/*` bypass. | No eval impact (eval calls graph directly). |
+| **Multi-layer caching** — agent-side 60s TTL on `GET /apis/*` (FHIR proxy, makes second visits to a patient instant); LRU on rasterized PDF pages + path lookups; browser `Cache-Control: immutable` for source documents; `DISABLE_CROSS_ENCODER` env flag bypasses the slow CPU reranker on resource-constrained hosts. | `app.py` — `_fhir_cache_*`, `_render_pdf_page_png`, `_resolve_document_path_cached`; `evidence_retriever.py` reranker branch. | Retrieval 21s → 0.16s with the env flag set. Dashboard re-render 5-10s → ms-range on cache hit. |
+| **Branch-protected eval gate** — `master` now requires the `eval` CI check to pass before merge; force-pushes blocked, deletions blocked. Earlier "blocking" was honor-system; now it's enforceable. | GitHub branch protection rule on `master`. | Gate now blocks unsafe merges, not just conventions. |
 
 ---
 
@@ -75,16 +102,21 @@ python3 backfill_citations.py
 
 The ingestion is **idempotent** — re-running it is a no-op for already-ingested files.
 
-### 4. Expose via ngrok (same as W1)
-```bash
-ngrok http https://localhost:9300 --url backlog-troubling-unfold.ngrok-free.dev
-ngrok http 8000              --url agent-copilot.ngrok-free.dev
-```
+### 4. Make it reachable
+
+Three ways, in order of how the project is actually deployed:
+
+- **Stable VPS (final-submission target):** see [`deploy/vps-runbook.md`](deploy/vps-runbook.md) for the DigitalOcean + Caddy + sslip.io recipe. Drops the canonical Caddyfile from [`deploy/Caddyfile`](deploy/Caddyfile) so SSE streaming works through the iframe path.
+- **Local laptop, always-on:** see [`deploy/README.md`](deploy/README.md) for launchd + ngrok service.
+- **Ad-hoc tunnel for a quick demo:**
+  ```bash
+  ngrok http https://localhost:9300
+  ngrok http 8000
+  ```
 
 ### 5. Open in the browser
-- `https://backlog-troubling-unfold.ngrok-free.dev/`, log in
-- Open any patient → click the floating ⚕️ button → drawer opens with the chat UI
-- Pre-room briefings and follow-up questions both work; the W2 patients (Chen / Whitaker / Reyes / Kowalski) get inline `(source: ..., "...")` citations on every patient-specific value
+
+For the deployed app (final submission): `https://openemr.146-190-75-148.sslip.io/`, log in `admin` / `pass`, search **Sofia Reyes** (or Margaret Chen, James Whitaker, Robert Kowalski). Open the patient → two iframes load (React dashboard + AI co-pilot). Try *"How should we tighten her glycemic control?"* and click **⚡ N tools** to see the routing trace. Full 5-min demo path in [`DEPLOY.md`](DEPLOY.md).
 
 ---
 
@@ -205,7 +237,9 @@ Triggers on pushes/PRs touching `agent/**`. The workflow:
 5. Runs `eval_clinical_graph.py` — exits non-zero on regression.
 6. Uploads `eval_clinical_results.json` as an artifact.
 
-Requires `ANTHROPIC_API_KEY` as a repo secret (extraction, refusal, missing-data buckets need it).
+Requires `ANTHROPIC_API_KEY` as a repo secret (extraction, refusal, missing-data buckets need it). `LANGCHAIN_API_KEY` is forwarded too so CI runs trace into the same `clinical-copilot` LangSmith project as local + droplet runs (treated as optional — forks without the secret still run the eval, just without traces).
+
+**Branch protection:** the `eval` job is a required status check on `master`. Force-pushes and branch deletions are blocked. A regression below any bucket's `min_threshold` (or >5% off baseline) makes the build red and prevents merge — the gate is enforceable, not honor-system.
 
 ---
 
