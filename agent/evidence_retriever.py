@@ -44,8 +44,37 @@ class GuidelineChunk:
         }
 
 
+# Minimum useful content for a search chunk. The corpus has a lot of
+# `## Source` sections containing only a "FDA / OpenFDA API. Public domain."
+# citation line and `Introduction` chunks containing only the file's `#`
+# title. These outrank substantive chunks under BM25's length normalization
+# (a 6-word chunk hitting two query terms scores ~1.0) so they crowd out
+# the actual content. 20 words is enough to keep all real section bodies
+# while dropping the metadata stubs.
+_MIN_CHUNK_WORDS = 20
+
+
+def _is_substantive(text: str) -> bool:
+    """True when a chunk's body has enough non-heading content to be worth
+    indexing. Drops markdown-only chunks (just `# Title`) and bibliographic
+    stubs (`Source: URL. Public domain.`)."""
+    if not text or not text.strip():
+        return False
+    # Strip leading markdown headings before counting words so a chunk
+    # that's just `# FDA Drug Label: Foo` doesn't sneak past on its title.
+    stripped = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    ).strip()
+    return len(stripped.split()) >= _MIN_CHUNK_WORDS
+
+
 def _chunk_markdown(filepath: str) -> list[GuidelineChunk]:
-    """Split a markdown guideline into section-level chunks."""
+    """Split a markdown guideline into section-level chunks.
+
+    Filters out chunks whose body is only a title line or a citation URL
+    (see _is_substantive) so they don't pollute the BM25 / dense candidate
+    pool with high-scoring but content-free results.
+    """
     filename = Path(filepath).name
     with open(filepath, "r") as f:
         content = f.read()
@@ -58,25 +87,9 @@ def _chunk_markdown(filepath: str) -> list[GuidelineChunk]:
     current_section = "Introduction"
     current_text = ""
 
-    for line in content.split("\n"):
-        # New section at ## heading
-        if line.startswith("## "):
-            if current_text.strip():
-                chunk_id = hashlib.md5(f"{filename}:{current_section}".encode()).hexdigest()[:8]
-                chunks.append(GuidelineChunk(
-                    text=current_text.strip(),
-                    source_file=filename,
-                    section=current_section,
-                    guideline_title=title,
-                    chunk_id=chunk_id,
-                ))
-            current_section = line.lstrip("# ").strip()
-            current_text = ""
-        else:
-            current_text += line + "\n"
-
-    # Last section
-    if current_text.strip():
+    def _flush():
+        if not _is_substantive(current_text):
+            return
         chunk_id = hashlib.md5(f"{filename}:{current_section}".encode()).hexdigest()[:8]
         chunks.append(GuidelineChunk(
             text=current_text.strip(),
@@ -86,6 +99,15 @@ def _chunk_markdown(filepath: str) -> list[GuidelineChunk]:
             chunk_id=chunk_id,
         ))
 
+    for line in content.split("\n"):
+        if line.startswith("## "):
+            _flush()
+            current_section = line.lstrip("# ").strip()
+            current_text = ""
+        else:
+            current_text += line + "\n"
+
+    _flush()
     return chunks
 
 
