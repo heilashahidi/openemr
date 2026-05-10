@@ -29,11 +29,54 @@ worker handoff trace.
 The deployment is a single $6/mo DigitalOcean droplet (Caddy + Docker
 + FastAPI agent) — survives reboots and crashes; no laptop dependency.
 
-### Verifying
+### Demo path (5-min walkthrough)
 
-- **Eval gate** — 58/58 boolean rubrics, blocking in CI. See the badge at the top of [`README_W2.md`](README_W2.md), per-bucket detail in [`EVAL_RESULTS.md`](EVAL_RESULTS.md), per-case JSON in [`agent/eval_clinical_results.json`](agent/eval_clinical_results.json).
+A single Sofia Reyes session that exercises every reviewer-graded
+behavior in sequence. Each step calls out what to look at:
+
+1. **Open the deployed app** → search **Sofia Reyes** → open her chart.
+   Two iframes load: the React dashboard (left) and the AI co-pilot
+   (right).
+2. **Ingestion + EMR grounding.** The dashboard's 12 widgets are populated
+   by [`ingest_to_openemr.py`](agent/ingest_to_openemr.py) running once at
+   deploy time over the four PDFs in `agent/sample_docs/intake-forms/`.
+   Click **Documents** widget → "View" any file → confirm bounding boxes
+   render over the source PDF (proves bbox + source tracing land in
+   `derived_fact_citations`).
+3. **Retrieval + evidence separation.** In the chat, ask: *"How should we
+   tighten her glycemic control?"* The answer renders in three sections
+   (CHART FINDINGS / EVIDENCE / CONSIDERATIONS) with `[N]` citation chips
+   throughout — proves the synthesis prompt enforces citation discipline
+   and the management format keeps the answer as decision support, not
+   an order.
+4. **Citation source viewer.** Click any `[N]` chip → side panel slides
+   open with the source PDF page and a colored bbox over the cited
+   value. Re-click is instant (browser cache + agent-side LRU).
+5. **Orchestration trace.** Click the **⚡ N tools** tag below the answer.
+   Inline routing trace expands: `supervisor → chart_lookup (1.2s) → 
+   supervisor → evidence_retriever (1.4s) → supervisor → finish (synth
+   3.1s)`. Each handoff shows the supervisor's reasoning + per-step
+   latency. **No LangSmith login required to see this.**
+6. **Streaming.** Send a follow-up — *"What management changes would
+   you recommend?"* — and watch the answer fill in token-by-token,
+   not in one dump. Time-to-first-token ~3-8s.
+7. **Eval gate** — open [`EVAL_RESULTS.md`](EVAL_RESULTS.md) for the
+   per-bucket breakdown (58/58, six categories) and click the CI badge
+   in [`README_W2.md`](README_W2.md) to confirm it's green on the
+   latest commit. Branch protection on `master` makes the `eval` check
+   required to merge — a regression in any bucket blocks the build.
+8. **PHI-safe logs (if you want to verify directly).** SSH the droplet
+   and `tail -1 /opt/openemr/agent/logs/encounters-$(date +%Y-%m-%d).jsonl`.
+   You'll see `tool_sequence`, `latency_per_step_ms`, `tokens_used`,
+   `cost_estimate_usd`, `retrieval_hits`, `extraction_confidence`,
+   `eval_outcome` — and `[NAME]`, `[DATE]`, `[PHONE]` placeholders
+   anywhere PHI would otherwise appear.
+
+### Verifying (artifact links)
+
+- **Eval gate** — 58/58 boolean rubrics, blocking in CI. See the badge at the top of [`README_W2.md`](README_W2.md), per-bucket detail in [`EVAL_RESULTS.md`](EVAL_RESULTS.md), per-case JSON in [`agent/eval_clinical_results.json`](agent/eval_clinical_results.json). Branch protection on `master` requires the `eval` check before merge.
 - **LangSmith traces** — every chat call streams a supervisor→worker trace tree to https://smith.langchain.com/ (project `clinical-copilot`) when `LANGCHAIN_API_KEY` is set in the agent's `.env`. The same trace is visible inline via the chat UI's clickable **⚡ N tools** tag — no LangSmith login required.
-- **PHI-safe encounter logs** — `agent/clinical_logger.py` writes a redacted JSONL record per turn (`tool_sequence`, `latency_per_step_ms`, `tokens_used`, `cost_estimate_usd`, `retrieval_hits`). Verified by 10 `no_phi_in_logs` eval cases.
+- **PHI-safe encounter logs** — `agent/clinical_logger.py` writes a redacted JSONL record per turn (`tool_sequence`, `latency_per_step_ms`, `tokens_used`, `cost_estimate_usd`, `retrieval_hits`, `extraction_confidence`, `eval_outcome`). Verified by 10 `no_phi_in_logs` eval cases.
 
 ---
 
