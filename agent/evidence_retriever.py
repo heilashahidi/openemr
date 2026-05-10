@@ -239,24 +239,33 @@ def _rerank_candidates(query: str, candidates: list, top_k: int) -> list[tuple]:
         except Exception:
             pass  # fall through to next backend
 
-    # Fall back to a local cross-encoder via sentence-transformers.
-    try:
-        from sentence_transformers import CrossEncoder
-        model = _local_reranker()
-        if model is not None:
-            pairs = [(query, c[0].text) for c in candidates]
-            scores = model.predict(pairs)
-            ranked = sorted(
-                zip(candidates, scores),
-                key=lambda x: float(x[1]),
-                reverse=True,
-            )[:top_k]
-            return [
-                (ch, h, k, d, float(s), "cross-encoder")
-                for (ch, h, k, d), s in ranked
-            ]
-    except Exception:
-        pass
+    # Fall back to a local cross-encoder via sentence-transformers — UNLESS
+    # the deployment opts out via DISABLE_CROSS_ENCODER=1. The local model
+    # (`cross-encoder/ms-marco-MiniLM-L-6-v2`) takes 15-20s on a CPU droplet
+    # AND, being trained on generic MS MARCO passages, often promotes FDA
+    # drug labels above domain guidelines (e.g. ranks atorvastatin labels
+    # above ADA glycemic targets for an HbA1c question). Hybrid fusion is
+    # both faster and better-aligned for this corpus when no domain-aware
+    # cloud reranker (Cohere) is available.
+    disable_local = os.getenv("DISABLE_CROSS_ENCODER", "").strip().lower() in ("1", "true", "yes", "on")
+    if not disable_local:
+        try:
+            from sentence_transformers import CrossEncoder
+            model = _local_reranker()
+            if model is not None:
+                pairs = [(query, c[0].text) for c in candidates]
+                scores = model.predict(pairs)
+                ranked = sorted(
+                    zip(candidates, scores),
+                    key=lambda x: float(x[1]),
+                    reverse=True,
+                )[:top_k]
+                return [
+                    (ch, h, k, d, float(s), "cross-encoder")
+                    for (ch, h, k, d), s in ranked
+                ]
+        except Exception:
+            pass
 
     # Final fallback: keep the existing hybrid-fusion order. This is what
     # the eval suite exercises in CI (no Cohere key, no transformers).
