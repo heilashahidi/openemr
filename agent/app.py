@@ -6,6 +6,7 @@ FastAPI app that uses Claude to answer PCP questions about patients via OpenEMR 
 import os
 import json
 import time
+import functools
 import requests
 import urllib3
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
@@ -422,7 +423,11 @@ async def ui():
     )
 
 
-def _resolve_document_path(document_id: int) -> Path:
+# Resolved document_id → filesystem path lookups never change for the
+# lifetime of a row (filename is the dedup key in `documents`), so caching
+# the lookup avoids a SQL round-trip on every citation click.
+@functools.lru_cache(maxsize=512)
+def _resolve_document_path_cached(document_id: int) -> str:
     out = _run_sql(f"SELECT name FROM documents WHERE id={document_id} LIMIT 1;") or ""
     lines = out.strip().split("\n")
     if len(lines) < 2:
@@ -432,7 +437,30 @@ def _resolve_document_path(document_id: int) -> Path:
     path = Path(__file__).parent / "sample_docs" / subdir / name
     if not path.exists():
         raise HTTPException(404, "source file missing on host")
-    return path
+    return str(path)
+
+
+def _resolve_document_path(document_id: int) -> Path:
+    return Path(_resolve_document_path_cached(document_id))
+
+
+# In-memory PNG cache for rasterized PDF pages. PyMuPDF rendering at 2x
+# takes ~1-2s per page on the CPU droplet; without server-side caching
+# every NEW citation click pays the full cost (browser cache only helps
+# after the first click on the same page). 256 pages ≈ 100-200 MB at 2x —
+# fine for the demo workload, drop it if memory becomes a concern.
+@functools.lru_cache(maxsize=256)
+def _render_pdf_page_png(path_str: str, page_num: int) -> bytes:
+    import fitz  # type: ignore[import-not-found]
+    doc = fitz.open(path_str)
+    try:
+        if page_num < 1 or page_num > len(doc):
+            raise HTTPException(404, f"page {page_num} out of range (1..{len(doc)})")
+        page = doc[page_num - 1]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        return pix.tobytes("png")
+    finally:
+        doc.close()
 
 
 # Source documents are immutable once ingested (filename = dedup key, no
@@ -463,19 +491,9 @@ async def document_page_png(document_id: int, page_num: int):
     if path.suffix.lower() != ".pdf":
         return FileResponse(path, media_type="image/png", headers=_DOC_CACHE_HEADERS)
     try:
-        import fitz  # type: ignore[import-not-found]
+        png_bytes = _render_pdf_page_png(str(path), page_num)
     except ImportError:
         raise HTTPException(500, "pymupdf not installed")
-    doc = fitz.open(path)
-    if page_num < 1 or page_num > len(doc):
-        doc.close()
-        raise HTTPException(404, f"page {page_num} out of range (1..{len(doc)})")
-    page = doc[page_num - 1]
-    # Render at 2x to get a sharp image without ballooning size.
-    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-    png_bytes = pix.tobytes("png")
-    doc.close()
-    from fastapi.responses import Response
     return Response(content=png_bytes, media_type="image/png", headers=_DOC_CACHE_HEADERS)
 
 
