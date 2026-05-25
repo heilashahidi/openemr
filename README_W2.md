@@ -4,6 +4,8 @@
 
 > Week 2 builds on the Week 1 sidecar with three structural pieces: a **document ingestion pipeline**, a **LangGraph supervisor** with three workers and explicit handoffs, and a **switch from patient-data RAG to external-corpus RAG**. Every derived fact is linked back to its source document via a sidecar citations table. A 58-case boolean-rubric eval suite gates regression in CI — see [`EVAL_RESULTS.md`](EVAL_RESULTS.md) for the latest run.
 
+**📄 Rendered HTML view:** [Week 1](https://htmlpreview.github.io/?https://github.com/heilashahidi/openemr/blob/master/README_W1.html) · [Week 2](https://htmlpreview.github.io/?https://github.com/heilashahidi/openemr/blob/master/README_W2.html)
+
 **Companion docs:** [`DEPLOY.md`](DEPLOY.md) (5-min walkthrough for graders), `ARCHITECTURE_W2.md` (the design narrative), `README_W1.md` (the Week 1 baseline this builds on).
 
 **Deployed URLs (final submission):**

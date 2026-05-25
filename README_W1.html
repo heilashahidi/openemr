@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week 1</title>
+<style>
+:root {
+  --fg: #1f2328;
+  --muted: #57606a;
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --border: #d0d7de;
+  --link: #0969da;
+  --accent: #0550ae;
+  --code-bg: #f6f8fa;
+  --table-stripe: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --border: #30363d;
+    --link: #4493f8;
+    --accent: #79c0ff;
+    --code-bg: #161b22;
+    --table-stripe: #161b22;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 56px 32px 96px;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 32px;
+}
+.topbar a { color: var(--muted); text-decoration: none; }
+.topbar a:hover { color: var(--link); }
+h1, h2, h3, h4 { line-height: 1.25; margin-top: 1.6em; margin-bottom: 0.5em; }
+h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: .3em; margin-top: 0; }
+h2 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1em; color: var(--muted); }
+p { margin: 0 0 1em; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
+ul, ol { padding-left: 1.6em; }
+li + li { margin-top: 4px; }
+blockquote {
+  margin: 1em 0;
+  padding: 0 1em;
+  color: var(--muted);
+  border-left: 4px solid var(--border);
+}
+code {
+  font-family: "SF Mono", "Monaco", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.875em;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+pre code { background: transparent; border: 0; padding: 0; font-size: inherit; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.93em;
+  display: block;
+  overflow-x: auto;
+}
+table thead { background: var(--bg-soft); }
+table th, table td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+table tr:nth-child(2n) { background: var(--table-stripe); }
+img { max-width: 100%; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span><span class="badge">Week 1</span> &nbsp; OpenEMR Clinical Co-Pilot</span>
+    <span><a href="https://github.com/heilashahidi/openemr">heilashahidi/openemr</a></span>
+  </div>
+  <h1 id="readme_w1md-clinical-co-pilot-week-1">README_W1.md — Clinical Co-Pilot, Week 1</h1>
+<blockquote>
+<p>An AI-powered clinical co-pilot embedded in OpenEMR that gives primary care physicians pre-room briefings, answers follow-up questions, and searches clinical notes — every claim cited to a FHIR record.</p>
+</blockquote>
+<p><strong>Companion docs:</strong> <code>ARCHITECTURE_W1.md</code> (system architecture), <code>README_W2.md</code> (the Week 2 work that builds on this).</p>
+<p><strong>Deployed URLs:</strong>
+- OpenEMR: <code>https://backlog-troubling-unfold.ngrok-free.dev</code>
+- Agent: <code>https://agent-copilot.ngrok-free.dev</code>
+- Login: <code>admin</code> / <code>pass</code></p>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<h3 id="prerequisites">Prerequisites</h3>
+<ul>
+<li>Docker + Docker Compose</li>
+<li>Python 3.9+</li>
+<li>ngrok (hobby plan for two tunnels)</li>
+<li>Anthropic API key</li>
+<li>LangSmith API key (optional, for tracing)</li>
+</ul>
+<h3 id="1-start-openemr">1. Start OpenEMR</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020">cd</span><span style="color: #BBB"> </span>docker/development-easy
+docker-compose<span style="color: #BBB"> </span>up<span style="color: #BBB"> </span>-d
+<span style="color: #60A0B0; font-style: italic"># Wait ~60 seconds for initialization</span>
+curl<span style="color: #BBB"> </span>-ks<span style="color: #BBB"> </span>https://localhost:9300/interface/login/login.php<span style="color: #BBB"> </span>|<span style="color: #BBB"> </span>head<span style="color: #BBB"> </span>-3
+</code></pre></div>
+
+<h3 id="2-start-the-agent">2. Start the Agent</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020">cd</span><span style="color: #BBB"> </span>agent
+pip<span style="color: #BBB"> </span>install<span style="color: #BBB"> </span>-r<span style="color: #BBB"> </span>requirements.txt
+cp<span style="color: #BBB"> </span>env.example<span style="color: #BBB"> </span>.env
+<span style="color: #60A0B0; font-style: italic"># Edit .env with your API keys</span>
+<span style="color: #007020">source</span><span style="color: #BBB"> </span>.env
+python3<span style="color: #BBB"> </span>-m<span style="color: #BBB"> </span>uvicorn<span style="color: #BBB"> </span>app:app<span style="color: #BBB"> </span>--port<span style="color: #BBB"> </span><span style="color: #40A070">8000</span>
+</code></pre></div>
+
+<h3 id="3-expose-via-ngrok">3. Expose via ngrok</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #60A0B0; font-style: italic"># Terminal 2 — OpenEMR</span>
+ngrok<span style="color: #BBB"> </span>http<span style="color: #BBB"> </span>https://localhost:9300<span style="color: #BBB"> </span>--url<span style="color: #BBB"> </span>backlog-troubling-unfold.ngrok-free.dev
+
+<span style="color: #60A0B0; font-style: italic"># Terminal 3 — Agent</span>
+ngrok<span style="color: #BBB"> </span>http<span style="color: #BBB"> </span><span style="color: #40A070">8000</span><span style="color: #BBB"> </span>--url<span style="color: #BBB"> </span>agent-copilot.ngrok-free.dev
+</code></pre></div>
+
+<h3 id="4-open-in-browser">4. Open in browser</h3>
+<ul>
+<li>Go to <code>https://backlog-troubling-unfold.ngrok-free.dev</code></li>
+<li>Log in → open any patient → click the floating ⚕️ button</li>
+</ul>
+<hr />
+<h2 id="what-week-1-provides">What Week 1 Provides</h2>
+<p>A conversational AI co-pilot for PCPs with structured FHIR tools and RAG over clinical notes. Every claim cites a FHIR resource UUID; a verification layer flags responses without citations.</p>
+<h3 id="capabilities-the-8-use-cases">Capabilities (the 8 use cases)</h3>
+<ul>
+<li><strong>UC1 — Pre-room briefing:</strong> auto-generated when a patient is selected</li>
+<li><strong>UC2 — Factual lookup:</strong> "What medications is this patient on?"</li>
+<li><strong>UC3 — Mid-visit pivot:</strong> "Has she ever mentioned chest pain?"</li>
+<li><strong>UC4 — Post-visit recap:</strong> "Summarize the last three visits"</li>
+<li><strong>UC5 — Clinical history search:</strong> RAG semantic search via ChromaDB</li>
+<li><strong>UC6 — Cross-domain reasoning:</strong> "What in their history might explain leg swelling?"</li>
+<li><strong>UC7 — New patient handling:</strong> honest silence on empty charts</li>
+<li><strong>UC8 — Safety guardrails:</strong> declines to prescribe or diagnose</li>
+</ul>
+<h3 id="architecture-sidecar">Architecture (sidecar)</h3>
+<p>Python FastAPI agent runs alongside OpenEMR and authenticates via OAuth2. Reads FHIR R4 resources (<code>Patient</code>, <code>Condition</code>, <code>MedicationRequest</code>, <code>AllergyIntolerance</code>, <code>Encounter</code>, <code>Observation</code>). Never writes to the chart. The only OpenEMR-side change is an iframe injection in <code>interface/patient_file/summary/demographics.php</code> that loads the chat UI.</p>
+<h3 id="7-tools">7 Tools</h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Type</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_patient_summary</code></td>
+<td>FHIR</td>
+<td>Demographics</td>
+</tr>
+<tr>
+<td><code>get_active_conditions</code></td>
+<td>FHIR</td>
+<td>Problem list</td>
+</tr>
+<tr>
+<td><code>get_active_medications</code></td>
+<td>FHIR</td>
+<td>Current meds</td>
+</tr>
+<tr>
+<td><code>get_allergies</code></td>
+<td>FHIR</td>
+<td>Allergy list</td>
+</tr>
+<tr>
+<td><code>get_recent_encounters</code></td>
+<td>FHIR</td>
+<td>Visit history</td>
+</tr>
+<tr>
+<td><code>get_recent_labs</code></td>
+<td>FHIR</td>
+<td>Lab results</td>
+</tr>
+<tr>
+<td><code>search_notes</code></td>
+<td>RAG</td>
+<td>Semantic note search (ChromaDB)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification-layer">Verification layer</h3>
+<p>Every response is checked before the PCP sees it:
+- <strong>Citation completeness</strong> — clinical claims must reference retrieved data
+- <strong>Hallucination patterns</strong> — phrases like "I recommend prescribing" are flagged
+- <strong>Silence enforcement</strong> — empty records are reported honestly, not filled
+- Unverified responses get a warning badge in the UI</p>
+<h3 id="eval-results-week-1">Eval Results (Week 1)</h3>
+<ul>
+<li>Core suite: 29/30 (96.7%) — tool selection, citation, content, negative validation</li>
+<li>RAG suite: 18/18 (100%) — RAG-only, hybrid, silence handling</li>
+<li><strong>Combined: 47/48 (97.9%)</strong></li>
+</ul>
+<hr />
+<h2 id="week-1-file-inventory">Week 1 File Inventory</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent/app.py</code></td>
+<td>FastAPI service, <code>/chat</code> and <code>/extract</code> endpoints</td>
+</tr>
+<tr>
+<td><code>agent/tools.py</code></td>
+<td>The 7 FHIR + RAG tool definitions and dispatcher</td>
+</tr>
+<tr>
+<td><code>agent/rag.py</code></td>
+<td>ChromaDB module that indexes patient encounter notes/conditions/meds</td>
+</tr>
+<tr>
+<td><code>agent/verification.py</code></td>
+<td>Citation + hallucination checks</td>
+</tr>
+<tr>
+<td><code>agent/chat.html</code></td>
+<td>Chat UI with auto-briefing (loaded into the demographics iframe)</td>
+</tr>
+<tr>
+<td><code>agent/eval_suite.py</code></td>
+<td>30-test core eval suite</td>
+</tr>
+<tr>
+<td><code>agent/test_rag.py</code></td>
+<td>18-test RAG eval suite</td>
+</tr>
+<tr>
+<td><code>agent/test_agent.py</code></td>
+<td>Smoke tests</td>
+</tr>
+<tr>
+<td><code>ARCHITECTURE_W1.md</code></td>
+<td>System architecture</td>
+</tr>
+<tr>
+<td><code>AUDIT.md</code></td>
+<td>OpenEMR integration audit</td>
+</tr>
+<tr>
+<td><code>USERS.md</code></td>
+<td>Target user + 8 use cases</td>
+</tr>
+<tr>
+<td><code>EVAL_RESULTS.md</code></td>
+<td>Formatted eval results + cost analysis</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="documentation">Documentation</h2>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ARCHITECTURE_W1.md</code></td>
+<td>Week 1 system architecture (sidecar, FHIR tools, RAG, verification, observability)</td>
+</tr>
+<tr>
+<td><code>AUDIT.md</code></td>
+<td>OpenEMR security, performance, architecture, data quality, compliance audit</td>
+</tr>
+<tr>
+<td><code>USERS.md</code></td>
+<td>Target user (PCP), 8 use cases, traceability table</td>
+</tr>
+<tr>
+<td><code>EVAL_RESULTS.md</code></td>
+<td>Eval results with cost projections</td>
+</tr>
+<tr>
+<td><code>README_W2.md</code></td>
+<td>The Week 2 follow-up</td>
+</tr>
+<tr>
+<td><code>ARCHITECTURE_W2.md</code></td>
+<td>Week 2 system architecture</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="cost-week-1-7-tool-agent-rag">Cost (Week 1, 7-tool agent + RAG)</h2>
+<table>
+<thead>
+<tr>
+<th>Scale</th>
+<th>Queries/day</th>
+<th>Daily cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 PCP</td>
+<td>60</td>
+<td>$0.84</td>
+</tr>
+<tr>
+<td>10 PCPs</td>
+<td>600</td>
+<td>$8.40</td>
+</tr>
+<tr>
+<td>100 PCPs</td>
+<td>6,000</td>
+<td>$84.00</td>
+</tr>
+<tr>
+<td>Hospital (300 PCPs)</td>
+<td>18,000</td>
+<td>$252.00</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="note-week-1-vs-week-2">Note: Week 1 vs Week 2</h2>
+<p>The Week 1 path (<code>app.py</code> → <code>tools.py</code> + <code>rag.py</code>) chunks patient encounter notes into ChromaDB for RAG. <strong>Week 2 replaces that with a different design</strong> — patient data stays in OpenEMR's FHIR-exposed tables, and the vector DB holds only an external clinical corpus (FDA + PubMed). See <code>README_W2.md</code> for what changed and why.</p>
+</div>
+</body>
+</html>

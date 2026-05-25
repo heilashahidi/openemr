@@ -2,6 +2,8 @@
 
 > An AI-powered clinical co-pilot embedded in OpenEMR that gives primary care physicians pre-room briefings, answers follow-up questions, and searches clinical notes — every claim cited to a FHIR record.
 
+**📄 Rendered HTML view:** [Week 1](https://htmlpreview.github.io/?https://github.com/heilashahidi/openemr/blob/master/README_W1.html) · [Week 2](https://htmlpreview.github.io/?https://github.com/heilashahidi/openemr/blob/master/README_W2.html)
+
 **Companion docs:** `ARCHITECTURE_W1.md` (system architecture), `README_W2.md` (the Week 2 work that builds on this).
 
 **Deployed URLs:**
